@@ -2,6 +2,7 @@ use crate::page::Page;
 use crate::page::tuple::{Tuple, Value};
 
 pub mod page;
+mod table;
 
 fn main() {
     let mut page = Page::new(0);

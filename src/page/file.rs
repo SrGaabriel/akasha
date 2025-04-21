@@ -32,6 +32,10 @@ impl PageFile {
         self.file.write_all(&page.data).await?;
         Ok(())
     }
+
+    pub async fn metadata(&self) -> std::io::Result<std::fs::Metadata> {
+        self.file.metadata().await
+    }
 }
 
 pub struct PageFileIO {
@@ -56,5 +60,11 @@ impl PageFileIO {
     pub async fn write_page(&self, file_id: u32, page: &Page) -> std::io::Result<()> {
         let mut page_file = self.open_page_file(file_id).await?;
         page_file.write_page(page).await
+    }
+
+    pub async fn num_pages(&self, file_id: u32) -> u32 {
+        let file = self.open_page_file(file_id).await.unwrap();
+        let metadata = file.metadata().await.unwrap();
+        (metadata.len() / PAGE_SIZE as u64) as u32
     }
 }
