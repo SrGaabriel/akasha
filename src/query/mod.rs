@@ -5,8 +5,6 @@ pub mod planner;
 use std::collections::HashMap;
 use crate::page::tuple::Value;
 
-pub struct Ref(usize);
-
 pub struct Query {
     pub table: String,
     pub filter: Option<Filter>,
@@ -32,8 +30,4 @@ impl Filter {
             Filter::Ne(_, v) => v.clone()
         }
     }
-}
-
-impl Ref {
-
 }

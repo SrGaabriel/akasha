@@ -33,7 +33,6 @@ impl Page {
     pub fn insert_tuple(&mut self, tuple: &Tuple) -> Result<usize, String> {
         let bytes = tuple.to_bytes();
         let tuple_len = bytes.len() as u16;
-        let slot_len = size_of::<Slot>() as u16;
 
         let slot_dir_end = 4 + (self.slot_count + 1) * size_of::<Slot>();
         let required_space = tuple_len as usize;
@@ -86,17 +85,11 @@ impl Page {
         let slot_count = u16::from_le_bytes([data[0], data[1]]) as usize;
         let free_space_pointer = u16::from_le_bytes([data[2], data[3]]);
 
-        let adjusted_pointer = if free_space_pointer == 0 {
-            PAGE_SIZE as u16
-        } else {
-            free_space_pointer
-        };
-
         Self {
             index,
             data,
             slot_count,
-            free_space_pointer: adjusted_pointer,
+            free_space_pointer,
         }
     }
 

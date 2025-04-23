@@ -29,7 +29,7 @@ impl PageFile {
     pub async fn write_page(&mut self, page: &Page) -> std::io::Result<()> {
         let offset = (page.index as usize) * PAGE_SIZE;
         self.file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
-        self.file.write_all(&page.data).await?;
+        self.file.write_all(&page.to_bytes()).await?;
         Ok(())
     }
 

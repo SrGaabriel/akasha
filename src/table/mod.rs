@@ -49,7 +49,7 @@ impl TableCatalog {
 
         let file_id = self.tables.len() as u32;
 
-        let mut pool = buffer_pool.write().await;
+        let pool = buffer_pool.read().await;
         let new_page_id = pool.frames.len() as u32; // naive strategy
         let new_page = Page::new(new_page_id);
         pool.file_accessor.write_page(file_id, &new_page).await.unwrap();

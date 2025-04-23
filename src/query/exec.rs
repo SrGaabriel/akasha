@@ -1,13 +1,13 @@
+use crate::page::tuple::Tuple;
+use crate::query::err::{QueryError, QueryResult};
+use crate::query::planner::{QueryPlanner, TableOp};
+use crate::query::Query;
+use crate::table::heap::scan_table;
+use crate::table::{Table, TableCatalog};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::query::planner::{QueryPlanner, TableOp};
-use crate::query::Query;
-use crate::table::heap::{scan_table, TableHeapIterator};
-use crate::table::{Table, TableCatalog};
 use tokio_stream::Stream;
-use crate::page::tuple::Tuple;
-use crate::query::err::{QueryError, QueryResult};
 
 pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send>>;
 
