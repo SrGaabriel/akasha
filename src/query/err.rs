@@ -8,4 +8,6 @@ pub enum QueryError {
     InvalidFilter(String),
     InvalidOperation(String),
     IoError(std::io::Error),
+    ColumnNotFound(String),
+    ValueAndDefaultMissing(String),
 }

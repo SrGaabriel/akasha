@@ -36,13 +36,15 @@ impl Page {
         let slot_len = size_of::<Slot>() as u16;
 
         let slot_dir_end = 4 + (self.slot_count + 1) * size_of::<Slot>();
-        let tuple_start = self.free_space_pointer as usize - tuple_len as usize;
-
-        if tuple_start < slot_dir_end {
-            return Err("Not enough space in page".to_string());
+        let required_space = tuple_len as usize;
+        if self.free_space_pointer as usize <= slot_dir_end + required_space {
+            return Err(format!("Not enough space in page: free_space={}, needed={}",
+                               self.free_space_pointer, slot_dir_end + required_space));
         }
 
+        let tuple_start = self.free_space_pointer as usize - tuple_len as usize;
         let offset = tuple_start as u16;
+
         self.data[offset as usize..(offset + tuple_len) as usize]
             .copy_from_slice(&bytes);
 
@@ -84,11 +86,17 @@ impl Page {
         let slot_count = u16::from_le_bytes([data[0], data[1]]) as usize;
         let free_space_pointer = u16::from_le_bytes([data[2], data[3]]);
 
+        let adjusted_pointer = if free_space_pointer == 0 {
+            PAGE_SIZE as u16
+        } else {
+            free_space_pointer
+        };
+
         Self {
             index,
             data,
             slot_count,
-            free_space_pointer,
+            free_space_pointer: adjusted_pointer,
         }
     }
 

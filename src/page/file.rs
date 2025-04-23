@@ -47,6 +47,10 @@ impl PageFileIO {
         PageFileIO { home_dir }
     }
 
+    pub async fn create_home(&self) -> std::io::Result<()> {
+        tokio::fs::create_dir_all(&self.home_dir).await
+    }
+
     pub async fn open_page_file(&self, file_id: u32) -> std::io::Result<PageFile> {
         let path = format!("{}/tb_{}.aka", self.home_dir, file_id);
         PageFile::open(file_id, &path).await

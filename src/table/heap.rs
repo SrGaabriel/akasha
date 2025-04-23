@@ -8,21 +8,21 @@ use crate::page::pool::BufferPool;
 use crate::page::tuple::Tuple;
 
 pub struct TableHeap {
-    file_id: u32,
-    buffer_pool: Arc<RwLock<BufferPool>>,
-    page_ids: Vec<u32>,
+    pub file_id: u32,
+    pub buffer_pool: Arc<RwLock<BufferPool>>,
+    pub page_ids: Vec<u32>,
 }
 
 impl TableHeap {
-    pub async fn insert_tuple(&mut self, tuple: &Tuple) -> Option<(u32, usize)> {
+    pub async fn insert_tuple(&mut self, tuple: &Tuple) -> Result<(u32, usize), String> {
         for &page_id in &self.page_ids {
-            let frame_arc = self.buffer_pool.write().await.get_page(self.file_id, page_id).await?;
+            let frame_arc = self.buffer_pool.write().await.get_page(self.file_id, page_id).await.ok_or("Failed to get page")?;
             let mut frame = frame_arc.write().await;
 
             let result = frame.page.insert_tuple(tuple);
             if let Ok(slot_id) = result {
                 frame.is_dirty = true;
-                return Some((page_id, slot_id));
+                return Ok((page_id, slot_id));
             }
         }
 
@@ -30,13 +30,13 @@ impl TableHeap {
         let new_page_id = pool.allocate_new_page(self.file_id).await;
         self.page_ids.push(new_page_id);
 
-        let frame_arc = pool.get_page(self.file_id, new_page_id).await?;
+        let frame_arc = pool.get_page(self.file_id, new_page_id).await.ok_or("Failed to get new page")?;
         let mut frame = frame_arc.write().await;
 
-        let slot_id = frame.page.insert_tuple(tuple).ok()?;
+        let slot_id = frame.page.insert_tuple(tuple)?;
         frame.is_dirty = true;
 
-        Some((new_page_id, slot_id))
+        Ok((new_page_id, slot_id))
     }
 
     pub async fn get_tuple(&self, page_id: u32, slot_id: usize) -> Option<Tuple> {
@@ -49,7 +49,7 @@ impl TableHeap {
 }
 
 pub struct TableHeapIterator {
-    table_heap: Arc<TableHeap>,
+    table_heap: Arc<RwLock<TableHeap>>,
     buffer_pool: Arc<RwLock<BufferPool>>,
     current_page_index: usize,
     current_slot_index: usize,
@@ -57,9 +57,13 @@ pub struct TableHeapIterator {
 }
 
 impl TableHeapIterator {
-    pub fn new(table_heap: Arc<TableHeap>) -> Self {
+    pub async fn create(table_heap: Arc<RwLock<TableHeap>>) -> Self {
+        let buffer_pool = {
+            let table_heap_lock = table_heap.read().await;
+            table_heap_lock.buffer_pool.clone()
+        };
         Self {
-            buffer_pool: table_heap.buffer_pool.clone(),
+            buffer_pool,
             table_heap,
             current_page_index: 0,
             current_slot_index: 0,
@@ -74,11 +78,12 @@ impl TableHeapIterator {
 }
 
 async fn next_tuple_helper(
-    table_heap: Arc<TableHeap>,
+    table_heap: Arc<RwLock<TableHeap>>,
     buffer_pool: Arc<RwLock<BufferPool>>,
     mut page_index: usize,
     mut slot_index: usize,
 ) -> Option<(Tuple, usize, usize)> {
+    let table_heap = table_heap.read().await;
     while page_index < table_heap.page_ids.len() {
         let page_id = table_heap.page_ids[page_index];
 
@@ -131,6 +136,6 @@ impl Stream for TableHeapIterator {
     }
 }
 
-pub fn scan_table(table_ref: Arc<TableHeap>) -> TableHeapIterator {
-    TableHeapIterator::new(table_ref)
+pub async fn scan_table(table_ref: Arc<RwLock<TableHeap>>) -> TableHeapIterator {
+    TableHeapIterator::create(table_ref).await
 }

@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 use crate::query::planner::{QueryPlanner, TableOp};
 use crate::query::Query;
 use crate::table::heap::{scan_table, TableHeapIterator};
-use crate::table::TableCatalog;
+use crate::table::{Table, TableCatalog};
 use tokio_stream::Stream;
 use crate::page::tuple::Tuple;
 use crate::query::err::{QueryError, QueryResult};
@@ -24,14 +24,28 @@ impl QueryExecutor {
         Self {catalog, planner}
     }
 
-
-    pub fn execute_ops(
+    pub async fn execute_ops(
         &self,
-        table_iter: TableHeapIterator,
+        table: &Table,
         ops: Vec<TableOp>,
     ) -> QueryResult<TupleStream> {
-        let initial_stream: Pin<Box<dyn Stream<Item = Tuple> + Send>> = Box::pin(table_iter);
-        let final_stream = ops.into_iter().fold(initial_stream, |stream, op| op.apply(stream));
+        let mut stream_ops = vec![];
+
+        for op in ops {
+            match op {
+                TableOp::Insert(values) => {
+                    let tuple = Tuple { values };
+                    let heap = table.heap.clone();
+                    let mut heap_lock = heap.write().await;
+                    heap_lock.insert_tuple(&tuple).await.unwrap();
+                }
+                _ => stream_ops.push(op),
+            }
+        }
+
+        let iter = scan_table(table.heap.clone()).await;
+        let initial_stream: TupleStream = Box::pin(iter);
+        let final_stream = stream_ops.into_iter().fold(initial_stream, |stream, op| op.apply(stream));
         Ok(final_stream)
     }
 
@@ -42,9 +56,7 @@ impl QueryExecutor {
             .await
             .ok_or(QueryError::TableNotFound(query.table.clone()))?;
         drop(catalog);
-        let ops = self.planner.plan(&table, &query);
-        let iter = scan_table(table.heap.clone());
-
-        self.execute_ops(iter, ops)
+        let ops = self.planner.plan(&table, &query)?;
+        self.execute_ops(&table, ops).await
     }
 }
