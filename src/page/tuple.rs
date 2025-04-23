@@ -22,7 +22,7 @@ impl Tuple {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Value {
     Int(i32),
     Float(f32),

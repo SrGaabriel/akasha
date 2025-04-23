@@ -1,6 +1,9 @@
-
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
+use futures::FutureExt;
 use tokio::sync::RwLock;
+use tokio_stream::Stream;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::Tuple;
 
@@ -43,4 +46,91 @@ impl TableHeap {
 
         frame.page.get_tuple(slot_id)
     }
+}
+
+pub struct TableHeapIterator {
+    table_heap: Arc<TableHeap>,
+    buffer_pool: Arc<RwLock<BufferPool>>,
+    current_page_index: usize,
+    current_slot_index: usize,
+    current_future: Option<Pin<Box<dyn futures::Future<Output = Option<(Tuple, usize, usize)>> + Send>>>,
+}
+
+impl TableHeapIterator {
+    pub fn new(table_heap: Arc<TableHeap>) -> Self {
+        Self {
+            buffer_pool: table_heap.buffer_pool.clone(),
+            table_heap,
+            current_page_index: 0,
+            current_slot_index: 0,
+            current_future: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.current_page_index = 0;
+        self.current_slot_index = 0;
+    }
+}
+
+async fn next_tuple_helper(
+    table_heap: Arc<TableHeap>,
+    buffer_pool: Arc<RwLock<BufferPool>>,
+    mut page_index: usize,
+    mut slot_index: usize,
+) -> Option<(Tuple, usize, usize)> {
+    while page_index < table_heap.page_ids.len() {
+        let page_id = table_heap.page_ids[page_index];
+
+        let mut pool = buffer_pool.write().await;
+        let frame_arc = pool.get_page(table_heap.file_id, page_id).await?;
+        let frame = frame_arc.read().await;
+
+        while slot_index < frame.page.slot_count {
+            let tuple_opt = frame.page.get_tuple(slot_index);
+            slot_index += 1;
+
+            if let Some(tuple) = tuple_opt {
+                return Some((tuple, page_index, slot_index));
+            }
+        }
+
+        page_index += 1;
+        slot_index = 0;
+    }
+    None
+}
+
+impl Stream for TableHeapIterator {
+    type Item = Tuple;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.current_future.is_none() {
+            let table_heap = self.table_heap.clone();
+            let buffer_pool = self.buffer_pool.clone();
+            let page_index = self.current_page_index;
+            let slot_index = self.current_slot_index;
+            let fut = next_tuple_helper(table_heap, buffer_pool, page_index, slot_index);
+            self.current_future = Some(Box::pin(fut));
+        }
+
+        let fut = self.current_future.as_mut().unwrap();
+        match fut.poll_unpin(cx) {
+            Poll::Ready(res) => {
+                self.current_future = None;
+                if let Some((tuple, page_index, slot_index)) = res {
+                    self.current_page_index = page_index;
+                    self.current_slot_index = slot_index;
+                    Poll::Ready(Some(tuple))
+                } else {
+                    Poll::Ready(None)
+                }
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub fn scan_table(table_ref: Arc<TableHeap>) -> TableHeapIterator {
+    TableHeapIterator::new(table_ref)
 }
