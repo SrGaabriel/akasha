@@ -1,19 +1,19 @@
-use crate::page::tuple::Tuple;
-use crate::query::err::{QueryError, QueryResult};
-use crate::query::planner::{QueryPlanner, TableOp};
-use crate::query::Query;
-use crate::table::heap::scan_table;
-use crate::table::{Table, TableCatalog};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio_stream::Stream;
+use futures::Stream;
+use crate::page::tuple::Tuple;
+use crate::query::err::{QueryError, QueryResult};
+use crate::query::Query;
+use crate::table::{Table, TableCatalog};
+use crate::query::plan::{QueryPlanner, TableOp, PlanResult};
+use crate::table::heap::scan_table;
 
-pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send>>;
+pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
 
 pub struct QueryExecutor {
     catalog: Arc<RwLock<TableCatalog>>,
-    planner: Box<dyn QueryPlanner>
+    planner: Box<dyn QueryPlanner>,
 }
 
 impl QueryExecutor {
@@ -27,36 +27,74 @@ impl QueryExecutor {
     pub async fn execute_ops(
         &self,
         table: &Table,
-        ops: Vec<TableOp>,
+        plan_result: PlanResult,
     ) -> QueryResult<TupleStream> {
-        let mut stream_ops = vec![];
+        match plan_result {
+            PlanResult::Stream(ops) => {
+                let iter = scan_table(table.heap.clone()).await;
+                let initial_stream: TupleStream = Box::pin(iter);
+                let final_stream = ops.into_iter().fold(initial_stream, |stream, op| op.apply(stream));
+                Ok(final_stream)
+            },
+            PlanResult::ModifyData { ops, returning } => {
+                let mut inserted_tuples = Vec::new();
 
-        for op in ops {
-            match op {
-                TableOp::Insert(values) => {
-                    let tuple = Tuple { values };
-                    let heap = table.heap.clone();
-                    let mut heap_lock = heap.write().await;
-                    heap_lock.insert_tuple(&tuple).await.unwrap();
+                for op in ops {
+                    match op {
+                        TableOp::Insert(values) => {
+                            let tuple = Tuple { values };
+                            let heap = table.heap.clone();
+                            let mut heap_lock = heap.write().await;
+                            heap_lock.insert_tuple(&tuple).await.unwrap();
+
+                            // If RETURNING clause is present, collect the inserted tuples
+                            if returning.is_some() {
+                                inserted_tuples.push(tuple);
+                            }
+                        },
+                        _ => return Err(QueryError::InvalidOperation(
+                            "Only INSERT operations are supported in ModifyData".to_string()
+                        )),
+                    }
                 }
-                _ => stream_ops.push(op),
+
+                if let Some(columns) = returning {
+                    if !columns.is_empty() {
+                        let tuples = inserted_tuples
+                            .into_iter()
+                            .map(move |tuple| {
+                                let projected_values = columns.iter()
+                                    .map(|&idx| tuple.values[idx].clone())
+                                    .collect();
+                                Tuple { values: projected_values }
+                            });
+                        Ok(Box::pin(futures::stream::iter(tuples)))
+                    } else {
+                        Ok(Box::pin(futures::stream::iter(inserted_tuples)))
+                    }
+                } else {
+                    Ok(Box::pin(futures::stream::empty()))
+                }
             }
         }
-
-        let iter = scan_table(table.heap.clone()).await;
-        let initial_stream: TupleStream = Box::pin(iter);
-        let final_stream = stream_ops.into_iter().fold(initial_stream, |stream, op| op.apply(stream));
-        Ok(final_stream)
     }
 
     pub async fn execute(&self, query: Query) -> QueryResult<impl Stream<Item = Tuple> + Send + '_> {
+        let table_name = match &query {
+            Query::Select(select) => &select.from,
+            Query::Insert(insert) => &insert.into,
+            Query::Update(update) => &update.table,
+            Query::Delete(delete) => &delete.table,
+        };
+
         let catalog = self.catalog.read().await;
         let table = catalog
-            .get_table(&query.table)
+            .get_table(table_name)
             .await
-            .ok_or(QueryError::TableNotFound(query.table.clone()))?;
+            .ok_or(QueryError::TableNotFound(table_name.clone()))?;
         drop(catalog);
-        let ops = self.planner.plan(&table, &query)?;
-        self.execute_ops(&table, ops).await
+
+        let plan_result = self.planner.plan(&table, &query)?;
+        self.execute_ops(&table, plan_result).await
     }
 }

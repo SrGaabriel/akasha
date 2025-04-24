@@ -1,6 +1,6 @@
 pub type QueryResult<T> = Result<T, QueryError>;
 
-#[derive(Debug)]
+#[derive(Debug)] // todo: better errors
 pub enum QueryError {
     TableNotFound(String),
     InvalidSchema(String),
@@ -10,4 +10,6 @@ pub enum QueryError {
     IoError(std::io::Error),
     ColumnNotFound(String),
     ValueAndDefaultMissing(String),
+    NotImplemented(String),
+    ValueAndColumnMismatch(usize, usize),
 }
