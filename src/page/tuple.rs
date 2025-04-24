@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Clone, Debug)]
 pub struct Tuple {
     pub values: Vec<Value>,
@@ -22,7 +24,7 @@ impl Tuple {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub enum Value {
     Int(i32),
     Float(f32),

@@ -30,16 +30,21 @@ async fn main() {
         ].into_iter().collect())
     };
 
-    let file_io = Arc::new(PageFileIO::new("akasha_dbs".to_string()));
+    let home_dir = "akasha_dbs".to_string();
+    let file_io = Arc::new(PageFileIO::new(home_dir.clone()));
     file_io.create_home().await.expect("Could not create home directory");
     let buffer_pool = Arc::new(RwLock::new(BufferPool::new(8, file_io)));
-    let mut catalog = TableCatalog::new();
-    catalog.create_table(
-        "users".to_string(),
-        vec!["name".to_string(), "age".to_string()],
-        vec![None],
-        buffer_pool
-    ).await.unwrap();
+    let catalog = match TableCatalog::load("akasha_dbs", Arc::clone(&buffer_pool)).await {
+        Ok(cat) => {
+            println!("Loaded catalog with {} tables", cat.tables.len());
+            cat
+        },
+        Err(_) => {
+            let mut cat = TableCatalog::new();
+            cat.persist(home_dir).await.unwrap();
+            cat
+        }
+    };
     let catalog = Arc::new(RwLock::new(catalog));
 
     let planner = Box::new(TemporaryQueryPlanner);
@@ -49,6 +54,6 @@ async fn main() {
     let mut stream = executor.execute(select_query).await.unwrap();
 
     while let Some(tuple) = stream.next().await {
-        println!("{:?}", tuple);
+        println!("Found one: {:?}", tuple);
     }
 }
