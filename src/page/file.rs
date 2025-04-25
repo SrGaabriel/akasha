@@ -2,6 +2,8 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use crate::page::{Page, PAGE_SIZE};
 
+pub const EXTENSION: &str = "record";
+
 pub struct PageFile {
     id: u32,
     file: File
@@ -52,7 +54,7 @@ impl PageFileIO {
     }
 
     pub async fn open_page_file(&self, file_id: u32) -> std::io::Result<PageFile> {
-        let path = format!("{}/tb_{}.aka", self.home_dir, file_id);
+        let path = format!("{}/pg_{}ak.{}", self.home_dir, file_id, EXTENSION);
         PageFile::open(file_id, &path).await
     }
 

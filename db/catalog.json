@@ -6,9 +6,6 @@
       "name",
       "age"
     ],
-    "column_defaults": [
-      null,
-      null
-    ]
+    "column_defaults": []
   }
 ]

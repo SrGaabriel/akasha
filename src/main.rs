@@ -6,44 +6,36 @@ use crate::page::tuple::{Tuple, Value};
 use crate::query::exec::QueryExecutor;
 use crate::table::TableCatalog;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
-use crate::query::{Columns, InsertQuery, Query, SelectQuery};
+use crate::frontend::lexer::tokenize;
 use crate::query::plan::planners::DefaultQueryPlanner;
 
 pub mod page;
 pub mod query;
 pub mod table;
+pub mod frontend;
 
 #[tokio::main]
 async fn main() {
-    let select_query = Query::Select(SelectQuery {
-        from: "users".to_string(),
-        columns: Columns::List(vec!["name".to_string(), "age".to_string()]),
-        conditions: None,
-        order_by: None,
-        limit: None,
-        offset: None
-    });
-
-    let insert_query = Query::Insert(InsertQuery {
-        into: "users".to_string(),
-        columns: vec!["name".to_string(), "age".to_string()],
-        values: vec![Value::Text("Alice".to_string()), Value::Int(30)],
-        returning: None,
-    });
-
-    let home_dir = "akasha_dbs".to_string();
+    let home_dir = "db".to_string();
     let file_io = Arc::new(PageFileIO::new(home_dir.clone()));
     file_io.create_home().await.expect("Could not create home directory");
     let buffer_pool = Arc::new(RwLock::new(BufferPool::new(8, file_io)));
-    let catalog = match TableCatalog::load("akasha_dbs", Arc::clone(&buffer_pool)).await {
+    let catalog = match TableCatalog::load("db", Arc::clone(&buffer_pool)).await {
         Ok(cat) => {
             println!("Loaded catalog with {} tables", cat.tables.len());
             cat
         },
         Err(_) => {
-            let cat = TableCatalog::new();
+            let mut cat = TableCatalog::new();
+            cat.create_table(
+                "users".to_string(),
+                vec!["name".to_string(), "age".to_string()],
+                vec![],
+                buffer_pool.clone(),
+            ).await.unwrap();
             cat.persist(home_dir).await.unwrap();
             cat
         }
@@ -53,20 +45,17 @@ async fn main() {
     let planner = Box::new(DefaultQueryPlanner);
     let executor = QueryExecutor::new(catalog, planner);
 
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
-    let _ = executor.execute(insert_query.clone()).await.unwrap();
+    let query_file = tokio::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("queries/test.aka")
+        .await
+        .expect("Failed to open query file");
 
-    let stream = executor.execute(select_query).await.unwrap();
-    let result: Vec<Tuple> = stream.collect().await;
-    println!("Result: {:?}", result);
+    let mut buffer = tokio::io::BufReader::new(query_file);
+    let mut text = String::new();
+    buffer.read_to_string(&mut text).await.expect("Failed to read query file");
+
+    let lexed = tokenize(text.as_str()).expect("Failed to lex query");
+    println!("{:?}", lexed)
 }
