@@ -47,7 +47,6 @@ impl QueryExecutor {
                             let mut heap_lock = heap.write().await;
                             heap_lock.insert_tuple(&tuple).await.unwrap();
 
-                            // If RETURNING clause is present, collect the inserted tuples
                             if returning.is_some() {
                                 inserted_tuples.push(tuple);
                             }

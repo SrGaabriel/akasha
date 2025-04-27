@@ -1,152 +1,345 @@
-// TODO: migrate to nom, combine or chomp
-
 use crate::frontend::err::QueryParsingError;
 
-pub type LexResult<'a> = Result<Vec<Token<'a>>, QueryParsingError>;
+pub type LexResult<'src> = Result<Vec<Token<'src>>, QueryParsingError>;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Token<'a> {
-    Let,
-    In,
-    Identifier(&'a str),
-    Number(&'a str),
-    Pipe,
-    Arrow,
-    Equals,
-    Comma,
-    LeftParen,
-    RightParen,
-    LeftBracket,
-    RightBracket,
-    LeftCurly,
-    RightCurly,
-    Dot,
-    Lambda,
-    Minus,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Token<'src> {
+    pub kind: TokenKind,
+    pub value: &'src str,
+    pub indent: usize,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    Number,
+    Identifier,
+    String,
     Plus,
+    Minus,
     Asterisk,
     Slash,
-    Percentage,
-    LeftArrow,
-    RightArrow,
+    Application,
+    LeftParenthesis,
+    RightParenthesis,
+    LeftBracket,
+    RightBracket,
     LeftAngleBracket,
     RightAngleBracket,
-    StringLit(&'a str),
+    Comma,
+    Dot,
+    RightArrow,
+    Equals,
+    Lambda,
+    Let,
+    In,
+    Do,
+    Dollar,
+    Newline,
+    True,
+    False,
+    Pipe,
+    EqualsEquals,
+    NotEquals
 }
 
-pub fn tokenize(input: &str) -> LexResult {
-    let mut tokens = Vec::with_capacity(input.len() / 4);
-    let bytes = input.as_bytes();
-    let mut offset = 0;
+pub struct Lexer<'src> {
+    source: &'src str,
+    chars: std::str::CharIndices<'src>,
+    current_char: Option<(usize, char)>,
+    position: usize,
+    line_start: bool,
+    current_indent: usize,
+}
 
-    while offset < bytes.len() {
-        let b = bytes[offset];
-
-        if b.is_ascii_whitespace() {
-            offset += 1;
-            continue;
+impl<'src> Lexer<'src> {
+    pub fn new(source: &'src str) -> Self {
+        let mut chars = source.char_indices();
+        let current_char = chars.next();
+        Self {
+            source,
+            chars,
+            current_char,
+            position: 0,
+            line_start: true,
+            current_indent: 0,
         }
+    }
 
-        let remaining = &input[offset..];
-        match b {
-            b'(' => { tokens.push(Token::LeftParen); offset += 1; }
-            b')' => { tokens.push(Token::RightParen); offset += 1; }
-            b'{' => { tokens.push(Token::LeftCurly); offset += 1; }
-            b'}' => { tokens.push(Token::RightCurly); offset += 1; }
-            b'[' => { tokens.push(Token::LeftBracket); offset += 1; }
-            b']' => { tokens.push(Token::RightBracket); offset += 1; }
-            b'<' => { tokens.push(Token::LeftAngleBracket); offset += 1 }
-            b'>' => { tokens.push(Token::RightAngleBracket); offset += 1 }
-            b',' => { tokens.push(Token::Comma); offset += 1; }
-            b'.' => { tokens.push(Token::Dot); offset += 1; }
-            b'\\' => { tokens.push(Token::Lambda); offset += 1 }
-            b'=' => {
-                if bytes.get(offset + 1) == Some(&b'>') {
-                    tokens.push(Token::Arrow);
-                    offset += 2;
-                } else {
-                    tokens.push(Token::Equals);
-                    offset += 1;
-                }
+    fn advance(&mut self) {
+        self.current_char = self.chars.next();
+        if let Some((pos, _)) = self.current_char {
+            self.position = pos;
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.current_char.map(|(_, c)| c)
+    }
+
+    fn peek_pos(&self) -> usize {
+        self.current_char.map_or(self.source.len(), |(pos, _)| pos)
+    }
+
+    fn peek_next(&self) -> Option<char> {
+        self.chars.clone().next().map(|(_, c)| c)
+    }
+
+    fn skip_whitespace(&mut self) -> usize {
+        let mut count = 0;
+        while let Some((_, c)) = self.current_char {
+            if c == ' ' || c == '\t' {
+                count += 1;
+                self.advance();
+            } else {
+                break;
             }
-            b'|' => {
-                if bytes.get(offset + 1) == Some(&b'>') {
-                    tokens.push(Token::Pipe);
-                    offset += 2;
-                } else {
-                    panic!("Unexpected `|` without `>`");
-                }
+        }
+        count
+    }
+
+    fn skip_comment(&mut self) {
+        while let Some((_, c)) = self.current_char {
+            if c == '\n' {
+                break;
             }
-            b'"' => {
-                let (s, len) = parse_string(remaining);
-                tokens.push(Token::StringLit(s));
-                offset += len;
+            self.advance();
+        }
+    }
+
+    fn is_identifier_start(c: char) -> bool {
+        c.is_alphabetic() || c == '_'
+    }
+
+    fn is_identifier_continue(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+
+    fn is_digit(c: char) -> bool {
+        c.is_ascii_digit()
+    }
+
+    fn read_identifier(&mut self) -> Token<'src> {
+        let start_pos = self.peek_pos();
+        self.advance();
+        while let Some((_, c)) = self.current_char {
+            if Self::is_identifier_continue(c) {
+                self.advance();
+            } else {
+                break;
             }
-            b'-' => {
-                match bytes.get(offset + 1) {
-                    Some(&b'-') => {
-                        let mut i = 2;
-                        while offset+i < bytes.len() && (bytes[offset + i] != b'\n') {
-                            i += 1;
+        }
+        let end_pos = self.peek_pos();
+        let text = &self.source[start_pos..end_pos];
+        let kind = match text {
+            "let" => TokenKind::Let,
+            "in" => TokenKind::In,
+            "do" => TokenKind::Do,
+            "true" => TokenKind::True,
+            "false" => TokenKind::False,
+            _ => TokenKind::Identifier,
+        };
+        Token {
+            kind,
+            value: text,
+            indent: self.current_indent,
+            span: Span { start: start_pos, end: end_pos },
+        }
+    }
+
+    fn read_number(&mut self) -> Token<'src> {
+        let start_pos = self.peek_pos();
+        if self.peek() == Some('-') {
+            self.advance();
+        }
+        while let Some((_, c)) = self.current_char {
+            if Self::is_digit(c) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if self.peek() == Some('.') {
+            self.advance();
+            if let Some((_, c)) = self.current_char {
+                if Self::is_digit(c) {
+                    self.advance();
+                    while let Some((_, c)) = self.current_char {
+                        if Self::is_digit(c) {
+                            self.advance();
+                        } else {
+                            break;
                         }
-                        offset += i;
                     }
-                    Some(&b'>') => { tokens.push(Token::RightArrow); offset += 2; }
-                    _ => { tokens.push(Token::Minus); offset += 1; }
                 }
             }
-            b'0'..=b'9' => {
-                let (num, len) = parse_number(remaining);
-                tokens.push(Token::Number(num));
-                offset += len;
-            }
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-                let (ident, len) = parse_identifier(remaining);
-                tokens.push(match ident {
-                    "let" => Token::Let,
-                    "in" => Token::In,
-                    _ => Token::Identifier(ident),
+        }
+        let end_pos = self.peek_pos();
+        Token {
+            kind: TokenKind::Number,
+            value: &self.source[start_pos..end_pos],
+            indent: self.current_indent,
+            span: Span { start: start_pos, end: end_pos },
+        }
+    }
+
+    fn read_string(&mut self) -> Result<Token<'src>, QueryParsingError> {
+        let start_pos = self.peek_pos();
+        self.advance();
+        while let Some((_, c)) = self.current_char {
+            if c == '"' {
+                let end_pos = self.peek_pos() + 1;
+                self.advance();
+                return Ok(Token {
+                    kind: TokenKind::String,
+                    value: &self.source[start_pos..end_pos],
+                    indent: self.current_indent,
+                    span: Span { start: start_pos, end: end_pos },
                 });
-                offset += len;
             }
-            _ => return Err(QueryParsingError::UnexpectedCharacter(char::from(b)))
+            self.advance();
+        }
+        Err(QueryParsingError::UnterminatedString(start_pos))
+    }
+
+    fn read_arrow(&mut self) -> Token<'src> {
+        let start_pos = self.peek_pos();
+        self.advance(); // Consume '-'
+        self.advance(); // Consume '>'
+        let end_pos = self.peek_pos();
+        Token {
+            kind: TokenKind::RightArrow,
+            value: &self.source[start_pos..end_pos],
+            indent: self.current_indent,
+            span: Span { start: start_pos, end: end_pos },
         }
     }
-    Ok(tokens)
-}
 
-fn parse_number(input: &str) -> (&str, usize) {
-    let bytes = input.as_bytes();
-    let mut len = 0;
-    while len < bytes.len() && bytes[len].is_ascii_digit() {
-        len += 1;
-    }
-    (&input[..len], len)
-}
-
-fn parse_identifier(input: &str) -> (&str, usize) {
-    let bytes = input.as_bytes();
-    let mut len = 0;
-    while len < bytes.len() && (
-        bytes[len].is_ascii_alphanumeric() || bytes[len] == b'_'
-    ) {
-        len += 1;
-    }
-    (&input[..len], len)
-}
-
-fn parse_string(input: &str) -> (&str, usize) {
-    let bytes = input.as_bytes();
-    let mut i = 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => break,
-            b'\\' => i += 2,
-            _ => i += 1,
+    fn read_application(&mut self) -> Token<'src> {
+        let start_pos = self.peek_pos();
+        self.advance(); // Consume '|'
+        self.advance(); // Consume '>'
+        let end_pos = self.peek_pos();
+        Token {
+            kind: TokenKind::Application,
+            value: &self.source[start_pos..end_pos],
+            indent: self.current_indent,
+            span: Span { start: start_pos, end: end_pos },
         }
     }
-    if i >= bytes.len() {
-        panic!("Unterminated string literal");
+
+    fn read_single_char_token(&mut self, c: char) -> Result<Token<'src>, QueryParsingError> {
+        let start_pos = self.peek_pos();
+        self.advance();
+        let end_pos = self.peek_pos();
+        let kind = match c {
+            '+' => TokenKind::Plus,
+            '-' => TokenKind::Minus,
+            '*' => TokenKind::Asterisk,
+            '/' => TokenKind::Slash,
+            '(' => TokenKind::LeftParenthesis,
+            ')' => TokenKind::RightParenthesis,
+            '[' => TokenKind::LeftBracket,
+            ']' => TokenKind::RightBracket,
+            ',' => TokenKind::Comma,
+            '.' => TokenKind::Dot,
+            '$' => TokenKind::Dollar,
+            '|' => TokenKind::Pipe,
+            '\\' => TokenKind::Lambda,
+            '=' => TokenKind::Equals,
+            '<' => TokenKind::LeftAngleBracket,
+            '>' => TokenKind::RightAngleBracket,
+            '\n' => TokenKind::Newline,
+            '\r' => {
+                if self.peek() == Some('\n') {
+                    self.advance();
+                    let end_pos = self.peek_pos();
+                    return Ok(Token {
+                        kind: TokenKind::Newline,
+                        value: &self.source[start_pos..end_pos],
+                        indent: self.current_indent,
+                        span: Span { start: start_pos, end: end_pos },
+                    });
+                }
+                TokenKind::Newline
+            }
+            _ => return Err(QueryParsingError::UnexpectedCharacter(c)),
+        };
+        Ok(Token {
+            kind,
+            value: &self.source[start_pos..end_pos],
+            indent: self.current_indent,
+            span: Span { start: start_pos, end: end_pos },
+        })
     }
-    (&input[1..i], i + 1)
+
+    pub fn tokenize(&mut self) -> Result<Vec<Token<'src>>, QueryParsingError> {
+        let mut tokens = Vec::new();
+        while let Some((_, c)) = self.current_char {
+            if self.line_start {
+                self.current_indent = self.skip_whitespace();
+                self.line_start = false;
+            }
+            match c {
+                ' ' => {
+                    self.advance();
+                    continue;
+                }
+                '\n' | '\r' => {
+                    let token = self.read_single_char_token(c)?;
+                    if token.kind == TokenKind::Newline {
+                        self.line_start = true;
+                    }
+                    tokens.push(token);
+                }
+                c if Self::is_identifier_start(c) => {
+                    tokens.push(self.read_identifier());
+                }
+                c if Self::is_digit(c) => {
+                    tokens.push(self.read_number());
+                }
+                '"' => {
+                    tokens.push(self.read_string()?);
+                }
+                '-' => {
+                    if let Some(next_c) = self.peek_next() {
+                        if next_c == '>' {
+                            tokens.push(self.read_arrow());
+                        } else if next_c == '-' {
+                            self.skip_comment();
+                            continue;
+                        } else if next_c.is_digit(10) {
+                            tokens.push(self.read_number());
+                        } else {
+                            tokens.push(self.read_single_char_token(c)?);
+                        }
+                    } else {
+                        tokens.push(self.read_single_char_token(c)?);
+                    }
+                }
+                '|' => {
+                    if let Some(next_c) = self.peek_next() {
+                        if next_c == '>' {
+                            tokens.push(self.read_application());
+                        } else {
+                            tokens.push(self.read_single_char_token(c)?);
+                        }
+                    } else {
+                        tokens.push(self.read_single_char_token(c)?);
+                    }
+                }
+                '+' | '*' | '/' | '(' | ')' | '[' | ']' | ',' | '.' | '$' | '=' | '\\' | '<' | '>' => {
+                    tokens.push(self.read_single_char_token(c)?);
+                }
+                _ => return Err(QueryParsingError::UnexpectedCharacter(c)),
+            }
+        }
+        Ok(tokens)
+    }
 }

@@ -1,16 +1,17 @@
 #![feature(let_chains)]
 
+use crate::frontend::ast::{Arena, AstTraversal};
+use crate::frontend::lexer::Lexer;
+use crate::frontend::parser::parse_expression;
+use crate::frontend::print::PrettyPrinter;
 use crate::page::file::PageFileIO;
 use crate::page::pool::BufferPool;
-use crate::page::tuple::{Tuple, Value};
 use crate::query::exec::QueryExecutor;
+use crate::query::plan::planners::DefaultQueryPlanner;
 use crate::table::TableCatalog;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
-use tokio_stream::StreamExt;
-use crate::frontend::lexer::tokenize;
-use crate::query::plan::planners::DefaultQueryPlanner;
 
 pub mod page;
 pub mod query;
@@ -56,6 +57,14 @@ async fn main() {
     let mut text = String::new();
     buffer.read_to_string(&mut text).await.expect("Failed to read query file");
 
-    let lexed = tokenize(text.as_str()).expect("Failed to lex query");
-    println!("{:?}", lexed)
+    let mut lexer = Lexer::new(text.as_str());
+    let lexed = lexer.tokenize().expect("Failed to lex query");
+
+    let mut arena = Arena::with_capacity(1000, 100);
+    let root_id = parse_expression(&*lexed, &mut arena).expect("Failed to parse expression");
+
+    let traversal = AstTraversal::new(&arena);
+    let mut printer = PrettyPrinter::new();
+
+    traversal.visit(&mut printer, root_id);
 }
