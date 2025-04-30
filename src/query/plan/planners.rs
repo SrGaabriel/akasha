@@ -3,12 +3,12 @@ use crate::page::tuple::{Tuple, Value};
 use crate::query::err::{QueryError, QueryResult};
 use crate::query::plan::{PlanResult, QueryPlanner, TableOp};
 use crate::query::{Condition, Expression, InsertQuery, Operator, Query, SelectQuery};
-use crate::table::Table;
+use crate::table::PhysicalTable;
 
 pub struct DefaultQueryPlanner;
 
 impl QueryPlanner for DefaultQueryPlanner {
-    fn plan(&self, table: &Table, query: &Query) -> QueryResult<PlanResult> {
+    fn plan(&self, table: &PhysicalTable, query: &Query) -> QueryResult<PlanResult> {
         match query {
             Query::Select(select) => self.plan_select(table, select),
             Query::Insert(insert) => self.plan_insert(table, insert),
@@ -19,7 +19,7 @@ impl QueryPlanner for DefaultQueryPlanner {
 }
 
 impl DefaultQueryPlanner {
-    fn plan_select(&self, table: &Table, select: &SelectQuery) -> QueryResult<PlanResult> {
+    fn plan_select(&self, table: &PhysicalTable, select: &SelectQuery) -> QueryResult<PlanResult> {
         let mut ops = Vec::new();
 
         if let Some(condition) = &select.conditions {
@@ -37,7 +37,7 @@ impl DefaultQueryPlanner {
         match &select.columns {
             crate::query::Columns::List(columns) => {
                 let column_indices = columns.iter()
-                    .map(|col| table.schema.get_column_index(col)
+                    .map(|col| table.info.get_column_index(col)
                         .ok_or_else(|| QueryError::ColumnNotFound(col.clone())))
                     .collect::<Result<Vec<_>, _>>()?;
                 ops.push(TableOp::Project(column_indices));
@@ -48,47 +48,48 @@ impl DefaultQueryPlanner {
         Ok(PlanResult::Stream(ops))
     }
 
-    fn plan_insert(&self, table: &Table, insert: &InsertQuery) -> QueryResult<PlanResult> {
-        let column_indices = insert.columns.iter()
-            .map(|col| table.schema.get_column_index(col)
+    fn plan_insert(&self, table: &PhysicalTable, insert: &InsertQuery) -> QueryResult<PlanResult> {
+        let specified_column_indices = insert.columns
+            .iter()
+            .map(|col| table.info.get_column_index(col)
                 .ok_or_else(|| QueryError::ColumnNotFound(col.clone())))
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut all_tuples = Vec::new();
 
-            if insert.values.len() != insert.columns.len() {
-                return Err(QueryError::ValueAndColumnMismatch(insert.columns.len(), insert.values.len()));
-            }
+        if insert.values.len() != insert.columns.len() {
+            return Err(QueryError::ValueAndColumnMismatch(insert.columns.len(), insert.values.len()));
+        }
 
-            let mut tuple_values = vec![Value::Null; table.schema.column_names.len()];
+        let mut tuple_values = vec![Value::Null; table.info.columns.len()];
 
-            for (i, value) in column_indices.iter().zip(insert.values.iter()) {
-                tuple_values[*i] = value.clone();
-            }
+        for (i, value) in specified_column_indices.iter().zip(insert.values.iter()) {
+            tuple_values[*i] = value.clone();
+        }
 
-            for (i, default) in table.schema.column_defaults.iter().enumerate() {
-                if !column_indices.contains(&i) && tuple_values[i] == Value::Null {
-                    if let Some(default_value) = default {
-                        tuple_values[i] = default_value.clone();
-                    } else {
-                        return Err(QueryError::ValueAndDefaultMissing(
-                            table.schema.column_names[i].clone(),
-                        ));
-                    }
+        for (i, column) in table.info.columns.values().enumerate() {
+            if !specified_column_indices.contains(&i) && tuple_values[i] == Value::Null { // we can simplify this check probably, just not sure right now
+                if let Some(default_value) = &column.default {
+                    tuple_values[i] = default_value.clone();
+                } else {
+                    return Err(QueryError::ValueAndDefaultMissing(
+                        table.info.columns.keys().collect::<Vec<_>>()[i].clone(),
+                    ));
                 }
             }
+        }
 
-            all_tuples.push(TableOp::Insert(tuple_values));
+        all_tuples.push(TableOp::Insert(tuple_values));
 
         let returning = match &insert.returning {
             Some(cols) => match cols {
-                crate::query::Columns::List(columns) => {
-                    Some(columns.iter()
-                        .map(|col| table.schema.get_column_index(col)
+                crate::query::Columns::List(requested_columns) => {
+                    Some(requested_columns.iter()
+                        .map(|col| table.info.get_column_index(col)
                             .ok_or_else(|| QueryError::ColumnNotFound(col.clone())))
                         .collect::<Result<Vec<_>, _>>()?)
-                },
-                crate::query::Columns::All => Some((0..table.schema.column_names.len()).collect()),
+                }
+                crate::query::Columns::All => Some((0..table.info.columns.len()).collect()),
             },
             None => None,
         };
@@ -99,11 +100,11 @@ impl DefaultQueryPlanner {
         })
     }
 
-    fn plan_condition(&self, table: &Table, condition: &Condition, ops: &mut Vec<TableOp>) -> QueryResult<()> {
+    fn plan_condition(&self, table: &PhysicalTable, condition: &Condition, ops: &mut Vec<TableOp>) -> QueryResult<()> {
         match condition {
             Condition::Compare { left, op, right } => {
                 if let (Expression::Column(col_name), Expression::Value(value)) = (left, right) {
-                    let column_index = table.schema.get_column_index(col_name)
+                    let column_index = table.info.get_column_index(col_name)
                         .ok_or_else(|| QueryError::ColumnNotFound(col_name.clone()))?;
 
                     ops.push(TableOp::Filter {
@@ -130,7 +131,7 @@ impl DefaultQueryPlanner {
 
     fn compile_expression_filter(
         &self,
-        table: &Table,
+        table: &PhysicalTable,
         left: &Expression,
         op: &Operator,
         right: &Expression,
@@ -171,12 +172,12 @@ impl DefaultQueryPlanner {
 
     fn compile_expression_accessor(
         &self,
-        table: &Table,
+        table: &PhysicalTable,
         expr: &Expression,
     ) -> QueryResult<impl Fn(&Tuple) -> Value + Send + Sync + 'static> {
         match expr {
             Expression::Column(col_name) => {
-                let column_index = table.schema.get_column_index(col_name)
+                let column_index = table.info.get_column_index(col_name)
                     .ok_or_else(|| QueryError::ColumnNotFound(col_name.clone()))?;
                 Ok(move |tuple: &Tuple| tuple.values[column_index].clone())
             },

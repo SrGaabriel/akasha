@@ -31,12 +31,6 @@ async fn main() {
         },
         Err(_) => {
             let mut cat = TableCatalog::new();
-            cat.create_table(
-                "users".to_string(),
-                vec!["name".to_string(), "age".to_string()],
-                vec![],
-                buffer_pool.clone(),
-            ).await.unwrap();
             cat.persist(home_dir).await.unwrap();
             cat
         }

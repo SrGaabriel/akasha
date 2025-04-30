@@ -166,3 +166,17 @@ impl Value {
         }
     }
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum DataType {
+    Null, // 0x00
+    Int, // 0x01
+    Long, // 0x02
+    Float, // 0x03
+    Double, // 0x04
+    Text, // 0x05
+    Boolean, // 0x06
+    Date, // 0x07
+    DateTime, // 0x08
+    Blob, // 0x09
+}

@@ -3,7 +3,7 @@ pub mod planners;
 use crate::page::tuple::{Tuple, Value};
 use crate::query::err::QueryResult;
 use crate::query::{Operator, Query};
-use crate::table::Table;
+use crate::table::PhysicalTable;
 use futures::StreamExt;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub enum TableOp {
 }
 
 pub trait QueryPlanner {
-    fn plan(&self, table: &Table, query: &Query) -> QueryResult<PlanResult>;
+    fn plan(&self, table: &PhysicalTable, query: &Query) -> QueryResult<PlanResult>;
 }
 
 pub enum PlanResult {

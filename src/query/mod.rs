@@ -1,6 +1,7 @@
 pub mod err;
 pub mod exec;
 pub mod plan;
+pub mod new_plan;
 
 use std::collections::HashMap;
 use crate::page::tuple::Value;

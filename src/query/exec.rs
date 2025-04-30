@@ -5,7 +5,7 @@ use futures::Stream;
 use crate::page::tuple::Tuple;
 use crate::query::err::{QueryError, QueryResult};
 use crate::query::Query;
-use crate::table::{Table, TableCatalog};
+use crate::table::{PhysicalTable, TableCatalog};
 use crate::query::plan::{QueryPlanner, TableOp, PlanResult};
 use crate::table::heap::scan_table;
 
@@ -26,7 +26,7 @@ impl QueryExecutor {
 
     pub async fn execute_ops(
         &self,
-        table: &Table,
+        table: &PhysicalTable,
         plan_result: PlanResult,
     ) -> QueryResult<TupleStream> {
         match plan_result {

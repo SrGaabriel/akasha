@@ -5,33 +5,39 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use crate::page::Page;
 use crate::page::pool::BufferPool;
-use crate::page::tuple::Value;
+use crate::page::tuple::{DataType, Value};
 use crate::table::heap::TableHeap;
 
 pub mod heap;
 
-#[derive(Clone)]
-pub struct Schema {
-    pub column_names: Vec<String>,
-    pub column_defaults: Vec<Option<Value>>
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TableInfo {
+    pub columns: HashMap<String, ColumnInfo>,
 }
 
-impl Schema {
+impl TableInfo {
     pub fn get_column_index(&self, name: &str) -> Option<usize> {
-        self.column_names.iter().position(|n| n == name)
+        self.columns.keys().position(|k| k == name)
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ColumnInfo {
+    pub data_type: DataType,
+    pub nullable: bool,
+    pub default: Option<Value>
+}
+
 #[derive(Clone)]
-pub struct Table {
+pub struct PhysicalTable {
     pub file_id: u32,
     pub name: String,
-    pub schema: Schema,
     pub heap: Arc<RwLock<TableHeap>>,
+    pub info: TableInfo
 }
 
 pub struct TableCatalog {
-    pub(crate) tables: HashMap<String, Table>,
+    pub tables: HashMap<String, PhysicalTable>,
 }
 
 impl TableCatalog {
@@ -42,8 +48,7 @@ impl TableCatalog {
     pub async fn create_table(
         &mut self,
         name: String,
-        columns: Vec<String>,
-        defaults: Vec<Option<Value>>,
+        info: TableInfo,
         buffer_pool: Arc<RwLock<BufferPool>>,
     ) -> Result<(), String> {
         if self.tables.contains_key(&name) {
@@ -64,28 +69,23 @@ impl TableCatalog {
             page_ids: vec![new_page_id],
         }));
 
-        let schema = Schema {
-            column_names: columns.clone(),
-            column_defaults: defaults
-        };
-
-        let entry = Table {
+        let entry = PhysicalTable {
             file_id,
             name: name.clone(),
-            schema,
+            info,
             heap: Arc::clone(&heap),
         };
 
-        self.tables.insert(name.clone(), entry);
+        self.tables.insert(name, entry);
 
         Ok(())
     }
 
-    pub fn register_table(&mut self, name: &str, table: Table) {
+    pub fn register_table(&mut self, name: &str, table: PhysicalTable) {
         self.tables.insert(name.to_string(), table);
     }
 
-    pub async fn get_table(&self, name: &str) -> Option<Table> {
+    pub async fn get_table(&self, name: &str) -> Option<PhysicalTable> {
         self.tables.get(name).cloned()
     }
 
@@ -93,8 +93,7 @@ impl TableCatalog {
         let tables: Vec<TableMetadata> = self.tables.values().map(|t| TableMetadata {
             name: t.name.clone(),
             file_id: t.file_id,
-            column_names: t.schema.column_names.clone(),
-            column_defaults: t.schema.column_defaults.clone(),
+            info: t.info.clone(),
         }).collect();
 
         let json = serde_json::to_string_pretty(&tables).map_err(|e| e.to_string())?;
@@ -117,14 +116,11 @@ impl TableCatalog {
                 page_ids: vec![0],
             }));
 
-            let table = Table {
+            let table = PhysicalTable {
                 file_id: entry.file_id,
                 name: entry.name.clone(),
-                schema: Schema {
-                    column_names: entry.column_names,
-                    column_defaults: entry.column_defaults,
-                },
-                heap,
+                info: entry.info,
+                heap
             };
 
             catalog.register_table(&entry.name, table);
@@ -139,6 +135,5 @@ impl TableCatalog {
 struct TableMetadata {
     name: String,
     file_id: u32,
-    column_names: Vec<String>,
-    column_defaults: Vec<Option<Value>>,
+    info: TableInfo
 }

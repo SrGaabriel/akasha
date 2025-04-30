@@ -1,11 +1,1 @@
-[
-  {
-    "name": "users",
-    "file_id": 0,
-    "column_names": [
-      "name",
-      "age"
-    ],
-    "column_defaults": []
-  }
-]
+[]
