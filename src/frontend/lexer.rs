@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use crate::frontend::err::QueryParsingError;
 
 pub type LexResult<'src> = Result<Vec<Token<'src>>, QueryParsingError>;
@@ -30,8 +31,8 @@ pub enum TokenKind {
     RightParenthesis,
     LeftBracket,
     RightBracket,
-    LeftAngleBracket,
-    RightAngleBracket,
+    GreaterThan,
+    LessThan,
     Comma,
     Dot,
     RightArrow,
@@ -253,8 +254,8 @@ impl<'src> Lexer<'src> {
             '|' => TokenKind::Pipe,
             '\\' => TokenKind::Lambda,
             '=' => TokenKind::Equals,
-            '<' => TokenKind::LeftAngleBracket,
-            '>' => TokenKind::RightAngleBracket,
+            '<' => TokenKind::GreaterThan,
+            '>' => TokenKind::LessThan,
             '\n' => TokenKind::Newline,
             '\r' => {
                 if self.peek() == Some('\n') {
@@ -285,6 +286,7 @@ impl<'src> Lexer<'src> {
             if self.line_start {
                 self.current_indent = self.skip_whitespace();
                 self.line_start = false;
+                continue;
             }
             match c {
                 ' ' => {
@@ -341,5 +343,42 @@ impl<'src> Lexer<'src> {
             }
         }
         Ok(tokens)
+    }
+}
+
+impl Display for TokenKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ref_name = match self {
+            TokenKind::Number => "Number",
+            TokenKind::Identifier => "Identifier",
+            TokenKind::String => "String",
+            TokenKind::Plus => "Plus",
+            TokenKind::Minus => "Minus",
+            TokenKind::Asterisk => "Asterisk",
+            TokenKind::Slash => "Slash",
+            TokenKind::Application => "Application",
+            TokenKind::LeftParenthesis => "LeftParenthesis",
+            TokenKind::RightParenthesis => "RightParenthesis",
+            TokenKind::LeftBracket => "LeftBracket",
+            TokenKind::RightBracket => "RightBracket",
+            TokenKind::GreaterThan => "GreaterThan",
+            TokenKind::LessThan => "LessThan",
+            TokenKind::Comma => "Comma",
+            TokenKind::Dot => "Dot",
+            TokenKind::RightArrow => "RightArrow",
+            TokenKind::Equals => "Equals",
+            TokenKind::Lambda => "Lambda",
+            TokenKind::Let => "Let",
+            TokenKind::In => "In",
+            TokenKind::Do => "Do",
+            TokenKind::Dollar => "Dollar",
+            TokenKind::Newline => "Newline",
+            TokenKind::True => "True",
+            TokenKind::False => "False",
+            TokenKind::Pipe => "Pipe",
+            TokenKind::EqualsEquals => "EqualsEquals",
+            TokenKind::NotEquals => "NotEquals"
+        };
+        write!(f, "{}", ref_name)
     }
 }

@@ -12,6 +12,8 @@ use crate::table::TableCatalog;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
+use crate::query::new_plan::optimizer::IdentityOptimizer;
+use crate::query::new_plan::transformer::AstToQueryTransformer;
 
 pub mod page;
 pub mod query;
@@ -38,7 +40,7 @@ async fn main() {
     let catalog = Arc::new(RwLock::new(catalog));
 
     let planner = Box::new(DefaultQueryPlanner);
-    let executor = QueryExecutor::new(catalog, planner);
+    let executor = QueryExecutor::new(catalog.clone(), planner);
 
     let query_file = tokio::fs::OpenOptions::new()
         .read(true)
@@ -53,12 +55,20 @@ async fn main() {
 
     let mut lexer = Lexer::new(text.as_str());
     let lexed = lexer.tokenize().expect("Failed to lex query");
+    println!("Lexed tokens: {:?}", lexed);
 
     let mut arena = Arena::with_capacity(1000, 100);
     let root_id = parse_expression(&*lexed, &mut arena).expect("Failed to parse expression");
 
     let traversal = AstTraversal::new(&arena);
     let mut printer = PrettyPrinter::new();
-
     traversal.visit(&mut printer, root_id);
+
+    let mut transformer = AstToQueryTransformer::new(
+        &arena,
+        Arc::clone(&catalog),
+        Box::new(IdentityOptimizer),
+    );
+    let transformed = transformer.transform(root_id).expect("Failed to transform AST");
+    println!("Transformed AST: {:?}", transformed);
 }

@@ -355,8 +355,8 @@ impl<'src> Parser<'src> {
         let mut left = self.numeric_expression()?;
 
         while self.peek_is_any(&[
-            TokenKind::LeftAngleBracket,
-            TokenKind::RightAngleBracket,
+            TokenKind::GreaterThan,
+            TokenKind::LessThan,
             TokenKind::EqualsEquals,
             TokenKind::NotEquals
         ]) {

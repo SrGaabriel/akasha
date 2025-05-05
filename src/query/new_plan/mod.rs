@@ -1,47 +1,57 @@
 // This will probably have some redundant structs at the start, but we'll gradually be replacing old architecture with this one
 
 pub mod transformer;
+pub mod err;
+pub mod optimizer;
 
-use std::collections::HashMap;
-use crate::frontend::ast::NodeId;
+use crate::frontend::ast::{Expr, NodeId};
 use crate::page::tuple::Value;
-use crate::query::BinaryOperator;
+use crate::query::{BinaryOperator, ComparisonOperator};
 
 #[derive(Debug, Clone)]
 pub enum PlanNode {
-    Scan {
+    TableScan {
         table_name: String,
-        predicate: Option<Box<Predicate>>,
+        filter: Option<Box<Predicate>>,
     },
     Filter {
         predicate: Box<Predicate>,
         input: Box<PlanNode>,
     },
-    Limit {
-        limit: usize,
-        offset: Option<usize>,
+    Map {
+        projection: Vec<ProjectionExpr>,
         input: Box<PlanNode>,
+    },
+    Apply {
+        func: Box<PlanNode>,
+        args: Vec<PlanNode>,
     },
     Pipe {
         left: Box<PlanNode>,
         right: Box<PlanNode>,
     },
-    Update {
-        table_name: String,
-        assignments: Vec<(String, PlanExpr)>,
-        predicate: Option<Box<Predicate>>,
+    Limit {
+        count: usize,
+        offset: Option<usize>,
+        input: Box<PlanNode>,
     },
-    Insert {
-        table_name: String,
-        columns: Vec<String>,
-        values: Vec<PlanExpr>,
+    Lambda {
+        params: Vec<String>,
+        body: NodeId,
     },
-    Delete {
-        table_name: String,
-        predicate: Option<Box<Predicate>>,
+    Values(Vec<Value>),
+    Binding {
+        name: String,
+        value: Box<PlanNode>,
+        body: Box<PlanNode>,
     },
-    ValueStream {
-        values: Vec<Value>,
+    Reference(String),
+    PartiallyApplied {
+        func: String,
+        args: Vec<PlanNode>,
+    },
+    BuiltInFunction {
+        name: String
     },
 }
 
@@ -64,10 +74,6 @@ pub enum PlanExpr {
     },
 }
 
-struct SymbolTable {
-    symbols: HashMap<String, SymbolInfo>,
-}
-
 struct SymbolInfo {
     node_id: Option<NodeId>,
     plan_node: Option<PlanNode>,
@@ -80,7 +86,7 @@ pub enum Predicate {
     Not(Box<Predicate>),
     Comparison {
         left: PlanExpr,
-        op: BinaryOperator,
+        op: ComparisonOperator,
         right: PlanExpr,
     },
     Exists(Box<PlanNode>),
@@ -96,4 +102,10 @@ pub enum Predicate {
     IsNotNull(PlanExpr),
     True,
     False,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectionExpr {
+    pub expr: Expr,
+    pub alias: Option<String>,
 }

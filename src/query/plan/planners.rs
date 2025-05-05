@@ -2,7 +2,7 @@ use std::sync::Arc;
 use crate::page::tuple::{Tuple, Value};
 use crate::query::err::{QueryError, QueryResult};
 use crate::query::plan::{PlanResult, QueryPlanner, TableOp};
-use crate::query::{Condition, Expression, InsertQuery, Operator, Query, SelectQuery};
+use crate::query::{Condition, Expression, InsertQuery, ComparisonOperator, Query, SelectQuery};
 use crate::table::PhysicalTable;
 
 pub struct DefaultQueryPlanner;
@@ -133,7 +133,7 @@ impl DefaultQueryPlanner {
         &self,
         table: &PhysicalTable,
         left: &Expression,
-        op: &Operator,
+        op: &ComparisonOperator,
         right: &Expression,
     ) -> QueryResult<impl Fn(&Tuple) -> bool + Send + Sync + 'static> {
         let left_accessor = self.compile_expression_accessor(table, left)?;
@@ -146,20 +146,20 @@ impl DefaultQueryPlanner {
 
             // TODO: remove boilerplate
             match operator {
-                Operator::Eq => left_val == right_val,
-                Operator::NotEq => left_val != right_val,
-                Operator::Gt => left_val > right_val,
-                Operator::GtEq => left_val >= right_val,
-                Operator::Lt => left_val < right_val,
-                Operator::LtEq => left_val <= right_val,
-                Operator::Like => {
+                ComparisonOperator::Eq => left_val == right_val,
+                ComparisonOperator::NotEq => left_val != right_val,
+                ComparisonOperator::Gt => left_val > right_val,
+                ComparisonOperator::GtEq => left_val >= right_val,
+                ComparisonOperator::Lt => left_val < right_val,
+                ComparisonOperator::LtEq => left_val <= right_val,
+                ComparisonOperator::Like => {
                     if let Value::Text(ref left_str) = left_val && let Value::Text(ref right_str) = right_val {
                         left_str.contains(right_str)
                     } else {
                         false
                     }
                 },
-                Operator::NotLike => {
+                ComparisonOperator::NotLike => {
                     if let Value::Text(ref left_str) = left_val && let Value::Text(ref right_str) = right_val {
                         !left_str.contains(right_str)
                     } else {

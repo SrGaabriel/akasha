@@ -54,7 +54,7 @@ pub enum Condition {
     Not(Box<Condition>),
     Compare {
         left: Expression,
-        op: Operator,
+        op: ComparisonOperator,
         right: Expression,
     }
 }
@@ -76,7 +76,7 @@ pub enum Expression {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Operator {
+pub enum ComparisonOperator {
     Eq,
     NotEq,
     Gt,
