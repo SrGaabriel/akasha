@@ -3,6 +3,9 @@
 pub mod transformer;
 pub mod err;
 pub mod optimizer;
+pub mod compiler;
+pub mod exec;
+pub mod op;
 
 use crate::frontend::ast::{Expr, NodeId};
 use crate::page::tuple::Value;
@@ -25,10 +28,6 @@ pub enum PlanNode {
     Apply {
         func: Box<PlanNode>,
         args: Vec<PlanNode>,
-    },
-    Pipe {
-        left: Box<PlanNode>,
-        right: Box<PlanNode>,
     },
     Limit {
         count: usize,
@@ -59,6 +58,7 @@ pub enum PlanNode {
 pub enum PlanExpr {
     Column(String),
     Literal(Value),
+    Struct(Vec<(String, Box<PlanExpr>)>),
     BinaryOp {
         left: Box<PlanExpr>,
         op: BinaryOperator,
@@ -106,6 +106,6 @@ pub enum Predicate {
 
 #[derive(Debug, Clone)]
 pub struct ProjectionExpr {
-    pub expr: Expr,
+    pub expr: PlanExpr,
     pub alias: Option<String>,
 }

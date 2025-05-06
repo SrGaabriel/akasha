@@ -1,17 +1,20 @@
 #![feature(let_chains)]
 
+use std::collections::HashMap;
 use crate::frontend::ast::{Arena, AstTraversal};
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::parse_expression;
 use crate::frontend::print::PrettyPrinter;
 use crate::page::file::PageFileIO;
 use crate::page::pool::BufferPool;
-use crate::query::exec::QueryExecutor;
 use crate::query::plan::planners::DefaultQueryPlanner;
-use crate::table::TableCatalog;
+use crate::table::{ColumnInfo, TableCatalog, TableInfo};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
+use tokio_stream::StreamExt;
+use crate::query::new_plan::compiler::PlanCompiler;
+use crate::query::new_plan::exec::QueryExecutor;
 use crate::query::new_plan::optimizer::IdentityOptimizer;
 use crate::query::new_plan::transformer::AstToQueryTransformer;
 
@@ -33,19 +36,34 @@ async fn main() {
         },
         Err(_) => {
             let mut cat = TableCatalog::new();
+            let mut columns = HashMap::new();
+            columns.insert("name".to_string(), ColumnInfo {
+                data_type: page::tuple::DataType::Int,
+                default: None,
+                nullable: false,
+            });
+            columns.insert("age".to_string(), ColumnInfo {
+                data_type: page::tuple::DataType::Int,
+                default: None,
+                nullable: false,
+            });
+            cat.create_table(
+                "users".to_string(),
+                TableInfo {
+                    columns
+                },
+                buffer_pool.clone()
+            ).await.expect("Failed to create table");
+
             cat.persist(home_dir).await.unwrap();
             cat
         }
     };
     let catalog = Arc::new(RwLock::new(catalog));
-
-    let planner = Box::new(DefaultQueryPlanner);
-    let executor = QueryExecutor::new(catalog.clone(), planner);
-
     let query_file = tokio::fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .open("queries/test.aka")
+        .open("queries/insert.aka")
         .await
         .expect("Failed to open query file");
 
@@ -71,4 +89,18 @@ async fn main() {
     );
     let transformed = transformer.transform(root_id).expect("Failed to transform AST");
     println!("Transformed AST: {:?}", transformed);
+
+    let mut compiler = PlanCompiler::new();
+    let catalog_lock = Arc::new(catalog.read().await);
+    let compiled = compiler.compile(&transformed, catalog_lock).expect("Failed to compile plan");
+    println!("Compiled: {:?}", compiled);
+
+    let mut executor = QueryExecutor::new(catalog.clone());
+    let mut plan = executor.execute_executable(compiled).await.expect("Failed to execute plan");
+
+    // let's iterate through the stream
+    println!("Plan results: ");
+    while let Some(tuple) = plan.next().await {
+        println!("{:?}", tuple);
+    }
 }

@@ -1,0 +1,4 @@
+insert users {
+    name = "John Doe",
+    age = 35,
+}

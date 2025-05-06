@@ -247,6 +247,15 @@ impl<'a> AstToQueryTransformer<'a> {
                     Err(TransformError::InvalidNumber)
                 }
             }
+            Expr::Instance(values) => {
+                let mut fields = vec![];
+                for (field, value) in values.iter() {
+                    let field_name = self.arena.resolve_str(*field).to_string();
+                    let field_value = self.transform_expr(*value)?;
+                    fields.push((field_name, Box::new(field_value)));
+                }
+                Ok(PlanExpr::Struct(fields))
+            }
             Expr::BinaryOp { op, left, right } => {
                 let left_expr = self.transform_expr(*left)?;
                 let right_expr = self.transform_expr(*right)?;

@@ -54,8 +54,27 @@ impl<'src> Parser<'src> {
         }
     }
 
+    fn expect_relevant(&mut self, kind: TokenKind) -> Result<Token<'src>, ParseError<'src>> {
+        let token = self.peek_relevant()?;
+        if token.kind == kind {
+            self.skip_newlines();
+            self.pos += 1;
+            Ok(token)
+        } else {
+            Err(ParseError::ExpectedToken(kind, token))
+        }
+    }
+
     fn peek_is_any(&self, kinds: &[TokenKind]) -> bool {
         if let Ok(token) = self.peek() {
+            kinds.contains(&token.kind)
+        } else {
+            false
+        }
+    }
+
+    fn peek_is_any_relevant(&self, kinds: &[TokenKind]) -> bool {
+        if let Ok(token) = self.peek_relevant() {
             kinds.contains(&token.kind)
         } else {
             false
@@ -152,7 +171,8 @@ impl<'src> Parser<'src> {
 
             match self.field_access() {
                 Ok(item) => items.push(item),
-                Err(_) => {
+                Err(err) => {
+                    println!("Debug application end error: {err:?}");
                     self.restore_position(current_pos);
                     break;
                 }
@@ -195,6 +215,7 @@ impl<'src> Parser<'src> {
                 self.consume()?;
                 Ok(self.arena.create_bool(false))
             }
+            TokenKind::LeftBraces => self.instance_expr(),
             TokenKind::LeftParenthesis => self.paren_expr(),
             TokenKind::LeftBracket => self.array_expr(),
             TokenKind::Let => self.let_expr(),
@@ -269,6 +290,30 @@ impl<'src> Parser<'src> {
         self.expect(TokenKind::LeftBracket)?;
         let items = self.comma_separated_expressions(TokenKind::RightBracket)?;
         Ok(self.arena.create_array(&items))
+    }
+
+    // it goes like this: { name = "value", arg2 = 5 }, etc..
+    fn instance_expr(&mut self) -> Result<NodeId, ParseError<'src>> {
+        self.expect(TokenKind::LeftBraces)?;
+        let mut items = Vec::new();
+
+        loop {
+            if self.peek_is_any_relevant(&[TokenKind::RightBraces]) {
+                break;
+            }
+
+            let id_token = self.expect_relevant(TokenKind::Identifier)?;
+            self.expect(TokenKind::Equals)?;
+            let value = self.expression()?;
+            items.push((id_token.value, value));
+
+            if !self.peek_is_any(&[TokenKind::Comma]) {
+                break;
+            }
+            self.consume()?;
+        }
+        self.expect_relevant(TokenKind::RightBraces)?;
+        Ok(self.arena.create_instance(&items))
     }
 
     fn lambda_expr(&mut self) -> Result<NodeId, ParseError<'src>> {

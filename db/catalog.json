@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "name": "users",
+    "file_id": 0,
+    "info": {
+      "columns": {
+        "name": {
+          "data_type": "Int",
+          "nullable": false,
+          "default": null
+        },
+        "age": {
+          "data_type": "Int",
+          "nullable": false,
+          "default": null
+        }
+      }
+    }
+  }
+]

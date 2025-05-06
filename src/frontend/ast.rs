@@ -89,6 +89,7 @@ pub enum Expr {
         params: Vec<StrId>,
         body: NodeId,
     },
+    Instance(SmallVec<(StrId, NodeId), 4>),
     Let {
         name: StrId,
         value: NodeId,
@@ -196,6 +197,16 @@ impl Arena {
             .map(|&name| self.intern_str(name))
             .collect();
         self.alloc(Expr::Lambda { params, body })
+    }
+
+    pub fn create_instance(&mut self, fields: &[(&str, NodeId)]) -> NodeId {
+        let instance = fields.iter()
+            .map(|&(name, value)| {
+                let name_id = self.intern_str(name);
+                (name_id, value)
+            })
+            .collect();
+        self.alloc(Expr::Instance(instance))
     }
 
     pub fn create_field_access(&mut self, base: NodeId, field: &str) -> NodeId {

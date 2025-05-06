@@ -49,6 +49,18 @@ impl<'a> Visitor<'a> for PrettyPrinter {
                 self.indent += 1;
                 self.visit(arena, *operand);
                 self.indent -= 1;
+            },
+            Expr::Instance(fields) => {
+                println!("Instance:");
+                self.indent += 1;
+                for (field, value) in fields.iter() {
+                    self.write_indent();
+                    println!("Field: {}", arena.resolve_str(*field));
+                    self.indent += 1;
+                    self.visit(arena, *value);
+                    self.indent -= 1;
+                }
+                self.indent -= 1;
             }
             Expr::BinaryOp { op, left, right } => {
                 println!("BinaryOp({:?}):", op);

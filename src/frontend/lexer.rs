@@ -27,6 +27,8 @@ pub enum TokenKind {
     Asterisk,
     Slash,
     Application,
+    LeftBraces,
+    RightBraces,
     LeftParenthesis,
     RightParenthesis,
     LeftBracket,
@@ -244,6 +246,8 @@ impl<'src> Lexer<'src> {
             '-' => TokenKind::Minus,
             '*' => TokenKind::Asterisk,
             '/' => TokenKind::Slash,
+            '{' => TokenKind::LeftBraces,
+            '}' => TokenKind::RightBraces,
             '(' => TokenKind::LeftParenthesis,
             ')' => TokenKind::RightParenthesis,
             '[' => TokenKind::LeftBracket,
@@ -336,7 +340,7 @@ impl<'src> Lexer<'src> {
                         tokens.push(self.read_single_char_token(c)?);
                     }
                 }
-                '+' | '*' | '/' | '(' | ')' | '[' | ']' | ',' | '.' | '$' | '=' | '\\' | '<' | '>' => {
+                '+' | '*' | '/' | '(' | ')' | '{' | '}' | '[' | ']' | ',' | '.' | '$' | '=' | '\\' | '<' | '>' => {
                     tokens.push(self.read_single_char_token(c)?);
                 }
                 _ => return Err(QueryParsingError::UnexpectedCharacter(c)),
@@ -361,6 +365,8 @@ impl Display for TokenKind {
             TokenKind::RightParenthesis => "RightParenthesis",
             TokenKind::LeftBracket => "LeftBracket",
             TokenKind::RightBracket => "RightBracket",
+            TokenKind::LeftBraces => "LeftBraces",
+            TokenKind::RightBraces => "RightBraces",
             TokenKind::GreaterThan => "GreaterThan",
             TokenKind::LessThan => "LessThan",
             TokenKind::Comma => "Comma",
