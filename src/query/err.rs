@@ -11,5 +11,9 @@ pub enum QueryError {
     ColumnNotFound(String),
     ValueAndDefaultMissing(String),
     NotImplemented(String),
+    ExpectedValue(String),
+    NotATransaction,
+    SymbolNotFound(String),
+    ExpectedRow,
     ValueAndColumnMismatch(usize, usize),
 }

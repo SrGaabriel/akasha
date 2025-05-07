@@ -1,13 +1,13 @@
-use crate::query::new_plan::PlanNode;
+use crate::query::new_plan::QueryExpr;
 
 pub trait QueryOptimizer {
-    fn optimize(&self, plan: PlanNode) -> PlanNode;
+    fn optimize(&self, plan: QueryExpr) -> QueryExpr;
 }
 
 pub struct IdentityOptimizer;
 
 impl QueryOptimizer for IdentityOptimizer {
-    fn optimize(&self, plan: PlanNode) -> PlanNode {
+    fn optimize(&self, plan: QueryExpr) -> QueryExpr {
         plan
     }
 }

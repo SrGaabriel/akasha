@@ -7,105 +7,141 @@ pub mod compiler;
 pub mod exec;
 pub mod op;
 
-use crate::frontend::ast::{Expr, NodeId};
+use crate::frontend::ast::NodeId;
 use crate::page::tuple::Value;
 use crate::query::{BinaryOperator, ComparisonOperator};
+use crate::query::new_plan::op::TableOp;
 
 #[derive(Debug, Clone)]
-pub enum PlanNode {
-    TableScan {
-        table_name: String,
-        filter: Option<Box<Predicate>>,
+pub enum Transaction {
+    Insert {
+        table: String,
+        values: Vec<(String, TransactionValue)>,
+        ops: Vec<TableOp>
     },
-    Filter {
-        predicate: Box<Predicate>,
-        input: Box<PlanNode>,
+    Select {
+        table: String,
+        ops: Vec<TableOp>
+    }
+}
+#[derive(Debug, Clone)]
+pub struct TransactionExpr {
+    pub typ: TransactionType,
+    pub operations: Vec<TransactionOp>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TransactionValue {
+    Row(Vec<(String, TransactionValue)>),
+    Literal(Value),
+}
+
+#[derive(Debug, Clone)]
+pub enum QueryExpr {
+    Transaction(TransactionExpr),
+
+    Bind {
+        input: Box<QueryExpr>,
+        func: Box<QueryExpr>,
     },
-    Map {
-        projection: Vec<ProjectionExpr>,
-        input: Box<PlanNode>,
+
+    Lambda {
+        params: Vec<String>,
+        body: NodeId
     },
+
+    Reference(String),
+    Literal(Value),
+    Column(String),
+
+    BinaryOp {
+        left: Box<QueryExpr>,
+        op: BinaryOperator,
+        right: Box<QueryExpr>,
+    },
+
     Apply {
-        func: Box<PlanNode>,
-        args: Vec<PlanNode>,
+        func: Box<QueryExpr>,
+        args: Vec<QueryExpr>,
+    },
+
+    Binding {
+        name: String,
+        value: Box<QueryExpr>,
+        body: Box<QueryExpr>,
+    },
+
+    Predicate(Box<PredicateExpr>),
+    Instance(Vec<(String, QueryExpr)>),
+
+    BuiltInFunction {
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum TransactionType {
+    Scan {
+        table_name: String
+    },
+    Insert {
+        table: String,
+        value: Box<QueryExpr>
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TransactionOp {
+    Filter {
+        predicate: Box<PredicateExpr>,
     },
     Limit {
         count: usize,
         offset: Option<usize>,
-        input: Box<PlanNode>,
-    },
-    Lambda {
-        params: Vec<String>,
-        body: NodeId,
-    },
-    Values(Vec<Value>),
-    Binding {
-        name: String,
-        value: Box<PlanNode>,
-        body: Box<PlanNode>,
-    },
-    Reference(String),
-    PartiallyApplied {
-        func: String,
-        args: Vec<PlanNode>,
-    },
-    BuiltInFunction {
-        name: String
-    },
+    }
 }
 
 #[derive(Debug, Clone)]
-pub enum PlanExpr {
-    Column(String),
-    Literal(Value),
-    Struct(Vec<(String, Box<PlanExpr>)>),
-    BinaryOp {
-        left: Box<PlanExpr>,
-        op: BinaryOperator,
-        right: Box<PlanExpr>,
-    },
-    FunctionCall {
-        name: String,
-        args: Vec<PlanExpr>,
-    },
-    Case {
-        when_clauses: Vec<(Box<Predicate>, Box<PlanExpr>)>,
-        else_expr: Option<Box<PlanExpr>>,
-    },
-}
-
-struct SymbolInfo {
-    node_id: Option<NodeId>,
-    plan_node: Option<PlanNode>,
+pub enum JoinType {
+    Inner,
+    Left,
+    Right,
+    Full,
 }
 
 #[derive(Debug, Clone)]
-pub enum Predicate {
-    And(Vec<Predicate>),
-    Or(Vec<Predicate>),
-    Not(Box<Predicate>),
-    Comparison {
-        left: PlanExpr,
-        op: ComparisonOperator,
-        right: PlanExpr,
-    },
-    Exists(Box<PlanNode>),
-    InSubquery {
-        expr: PlanExpr,
-        subquery: Box<PlanNode>,
-    },
-    InList {
-        expr: PlanExpr,
-        list: Vec<Value>,
-    },
-    IsNull(PlanExpr),
-    IsNotNull(PlanExpr),
-    True,
-    False,
+pub enum SortDirection {
+    Ascending,
+    Descending,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProjectionExpr {
-    pub expr: PlanExpr,
+    pub expr: QueryExpr,
     pub alias: Option<String>,
 }
+
+#[derive(Debug, Clone)]
+pub struct AggregateExpr {
+    pub function: String,
+    pub expr: QueryExpr,
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PredicateExpr {
+    Comparison {
+        left: QueryExpr,
+        op: ComparisonOperator,
+        right: QueryExpr,
+    },
+    And(Box<PredicateExpr>, Box<PredicateExpr>),
+    Or(Box<PredicateExpr>, Box<PredicateExpr>),
+    Not(Box<PredicateExpr>),
+    IsNull(QueryExpr),
+    IsNotNull(QueryExpr),
+    In(QueryExpr, Vec<QueryExpr>),
+    Exists(Box<QueryExpr>)
+}
+
+type SymbolInfo = QueryExpr;

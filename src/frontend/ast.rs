@@ -80,7 +80,7 @@ pub enum Expr {
     },
     FunctionCall {
         func: NodeId,
-        args: NodeId,
+        args: SmallVec<NodeId, 4>,
     },
     Tuple(SmallVec<NodeId, 4>),
     Array(SmallVec<NodeId, 4>),
@@ -164,8 +164,12 @@ impl Arena {
         self.alloc(Expr::BinaryOp { op, left, right })
     }
 
-    pub fn create_function_call(&mut self, func: NodeId, args: NodeId) -> NodeId {
-        self.alloc(Expr::FunctionCall { func, args })
+    pub fn create_function_call(&mut self, func: NodeId, args: &[NodeId]) -> NodeId {
+        let mut args_vec = SmallVec::with_capacity(args.len());
+        for &arg in args {
+            args_vec.push(arg);
+        }
+        self.alloc(Expr::FunctionCall { func, args: args_vec })
     }
 
     pub fn create_tuple(&mut self, items: &[NodeId]) -> NodeId {

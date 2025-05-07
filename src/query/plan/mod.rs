@@ -50,7 +50,7 @@ impl TableOp {
                     let column_value = &tuple.values[column_index];
                     futures::future::ready(match (column_value, &operator, &value) {
                         (a, ComparisonOperator::Eq, b) => a == b,
-                        (a, ComparisonOperator::NotEq, b) => a != b,
+                        (a, ComparisonOperator::Neq, b) => a != b,
                         (a, ComparisonOperator::Gt, b) => a > b,
                         (a, ComparisonOperator::GtEq, b) => a >= b,
                         (a, ComparisonOperator::Lt, b) => a < b,

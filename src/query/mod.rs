@@ -78,7 +78,7 @@ pub enum Expression {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ComparisonOperator {
     Eq,
-    NotEq,
+    Neq,
     Gt,
     Lt,
     GtEq,
@@ -93,7 +93,7 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
-    Modulus
+    Modulo
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

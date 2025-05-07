@@ -16,8 +16,6 @@ pub enum TransformError {
     InvalidNumber,
     #[error("Unsupported expression: {0:?}")]
     UnsupportedExpression(Expr),
-    #[error("Invalid argument list")]
-    InvalidArgumentList,
     #[error("Invalid number of lambda parameters")]
     InvalidLambdaParams,
     #[error("Expected a lambda expression")]
@@ -28,4 +26,10 @@ pub enum TransformError {
     TooManyArguments,
     #[error("Unknown function name")]
     UnknownFunction,
+    #[error("Expected {expected} arguments for function `{name}`, but found {found}")]
+    WrongNumberOfArguments {
+        name: String,
+        expected: usize,
+        found: usize,
+    }
 }

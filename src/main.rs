@@ -96,11 +96,11 @@ async fn main() {
     println!("Compiled: {:?}", compiled);
 
     let mut executor = QueryExecutor::new(catalog.clone());
-    let mut plan = executor.execute_executable(compiled).await.expect("Failed to execute plan");
+    let mut plan = executor.execute_transaction(compiled).await.expect("Failed to execute plan");
 
     // let's iterate through the stream
     println!("Plan results: ");
-    while let Some(tuple) = plan.next().await {
-        println!("{:?}", tuple);
-    }
+    // while let Some(tuple) = plan.next().await {
+    //     println!("{:?}", tuple);
+    // }
 }

@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
 use futures::Stream;
@@ -12,10 +13,11 @@ pub enum TableOp {
         operator: ComparisonOperator,
         value: Value,
     },
-    Insert(Vec<Value>),
     Project(Vec<usize>),
-    Offset(usize),
-    Limit(usize),
+    Limit {
+        count: usize,
+        offset: usize
+    },
     PredicativeFilter(Arc<dyn Fn(&Tuple) -> bool + Send + Sync>),
     Map(Arc<dyn Fn(&Tuple) -> Tuple + Send + Sync>),
 }
@@ -35,7 +37,7 @@ impl TableOp {
                     let column_value = &tuple.values[column_index];
                     futures::future::ready(match (column_value, &operator, &value) {
                         (a, ComparisonOperator::Eq, b) => a == b,
-                        (a, ComparisonOperator::NotEq, b) => a != b,
+                        (a, ComparisonOperator::Neq, b) => a != b,
                         (a, ComparisonOperator::Gt, b) => a > b,
                         (a, ComparisonOperator::GtEq, b) => a >= b,
                         (a, ComparisonOperator::Lt, b) => a < b,
@@ -74,9 +76,30 @@ impl TableOp {
             TableOp::Map(map_fn) => {
                 Box::pin(stream.map(move |tuple| map_fn(&tuple)))
             },
-            TableOp::Limit(limit) => Box::pin(stream.take(limit)),
-            TableOp::Offset(offset) => Box::pin(stream.skip(offset)),
+            TableOp::Limit { count, offset } => Box::pin(stream.skip(offset).take(count)), // todo: fix
             _ => Box::pin(stream),
+        }
+    }
+}
+
+impl Debug for TableOp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TableOp::Filter { column_index, operator, value } => {
+                write!(f, "Filter(column_index: {}, operator: {:?}, value: {:?})", column_index, operator, value)
+            }
+            TableOp::Project(indices) => {
+                write!(f, "Project(indices: {:?})", indices)
+            }
+            TableOp::Limit { count, offset } => {
+                write!(f, "Limit(count: {}, offset: {})", count, offset)
+            }
+            TableOp::PredicativeFilter(_) => {
+                write!(f, "PredicativeFilter")
+            }
+            TableOp::Map(_) => {
+                write!(f, "Map")
+            }
         }
     }
 }

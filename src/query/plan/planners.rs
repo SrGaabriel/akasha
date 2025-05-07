@@ -147,7 +147,7 @@ impl DefaultQueryPlanner {
             // TODO: remove boilerplate
             match operator {
                 ComparisonOperator::Eq => left_val == right_val,
-                ComparisonOperator::NotEq => left_val != right_val,
+                ComparisonOperator::Neq => left_val != right_val,
                 ComparisonOperator::Gt => left_val > right_val,
                 ComparisonOperator::GtEq => left_val >= right_val,
                 ComparisonOperator::Lt => left_val < right_val,

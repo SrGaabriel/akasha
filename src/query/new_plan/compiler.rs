@@ -1,37 +1,19 @@
-use crate::page::tuple::{Tuple, Value};
-use crate::query::err::QueryResult;
-use crate::query::new_plan::{PlanExpr, PlanNode, Predicate, ProjectionExpr, SymbolInfo};
-use crate::query::ComparisonOperator;
+use crate::page::tuple::Tuple;
+use crate::query::err::{QueryError, QueryResult};
+use crate::query::new_plan::op::TableOp;
+use crate::query::new_plan::{PredicateExpr, ProjectionExpr, QueryExpr, SortDirection, SymbolInfo, Transaction, TransactionOp, TransactionType, TransactionValue};
 use crate::table::TableCatalog;
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use tokio::sync::RwLockReadGuard;
-use crate::query::new_plan::op::TableOp;
-
-#[derive(Debug)]
-pub enum PlanExecutable {
-    TableScan {
-        table: String,
-        ops: Vec<TableOp>,
-    },
-    Filter {
-        input: Box<PlanExecutable>,
-        ops: Vec<TableOp>,
-    },
-    Projection {
-        input: Box<PlanExecutable>,
-        op: TableOp,
-    },
-    Limit {
-        input: Box<PlanExecutable>,
-        ops: Vec<TableOp>,
-    },
-    Values(Vec<Value>),
-}
 
 pub struct PlanCompiler {
     symbol_table_stack: Vec<HashMap<String, SymbolInfo>>,
+}
+
+struct SortOp {
+    column_index: usize,
+    direction: SortDirection
 }
 
 impl PlanCompiler {
@@ -43,65 +25,14 @@ impl PlanCompiler {
 
     pub fn compile(
         &mut self,
-        plan: &PlanNode,
+        expr: &QueryExpr,
         catalog: Arc<RwLockReadGuard<TableCatalog>>,
-    ) -> QueryResult<PlanExecutable> {
-        match plan {
-            PlanNode::TableScan { table_name, filter } => {
-                let mut ops = Vec::new();
-
-                if let Some(predicate) = filter {
-                    let filter_ops = self.compile_predicate(predicate)?;
-                    ops.extend(filter_ops);
-                }
-
-                Ok(PlanExecutable::TableScan {
-                    table: table_name.clone(),
-                    ops,
-                })
-            },
-            PlanNode::Filter { predicate, input } => {
-                let input_exe = self.compile(input, catalog)?;
-                let filter_ops = self.compile_predicate(predicate)?;
-
-                Ok(PlanExecutable::Filter {
-                    input: Box::new(input_exe),
-                    ops: filter_ops,
-                })
-            },
-            PlanNode::Map { projection, input } => {
-                let input_exe = self.compile(input, catalog.clone())?;
-                let projection_op = self.compile_projection(catalog, &projection)?;
-
-                Ok(PlanExecutable::Projection {
-                    input: Box::new(input_exe),
-                    op: projection_op,
-                })
-            },
-            PlanNode::Limit { count, offset, input } => {
-                let input_exe = self.compile(input, catalog)?;
-
-                let mut ops = Vec::new();
-                if let Some(offset_val) = offset {
-                    ops.push(TableOp::Offset(*offset_val));
-                }
-                ops.push(TableOp::Limit(*count));
-
-                Ok(PlanExecutable::Limit {
-                    input: Box::new(input_exe),
-                    ops,
-                })
-            },
-            PlanNode::Values(values) => {
-                Ok(PlanExecutable::Values(values.clone()))
-            },
-            PlanNode::Binding { name, value, body } => {
+    ) -> QueryResult<Transaction> {
+        match expr {
+            QueryExpr::Binding { name, value, body } => {
                 self.push_scope();
 
-                self.add_symbol(name.clone(), SymbolInfo {
-                    node_id: None,
-                    plan_node: Some(*value.clone()),
-                });
+                self.add_symbol(name.clone(), *value.clone());
 
                 let result = self.compile(body, catalog.clone())?;
 
@@ -109,38 +40,102 @@ impl PlanCompiler {
 
                 Ok(result)
             },
-            u => panic!("Unsupported plan node type: {:?}", u),
+            QueryExpr::Reference(name) => {
+                if let Some(info) = self.lookup_symbol(name) {
+                    self.compile(&info.clone(), catalog.clone())
+                } else {
+                    Err(QueryError::SymbolNotFound(name.clone()))
+                }
+            },
+            QueryExpr::Transaction(transaction) => {
+                let mut ops = vec![];
+                for op in &transaction.operations {
+                    let compiled_op = self.compile_transaction_ops(catalog.clone(), op)?;
+                    ops.extend(compiled_op);
+                }
+
+                match &transaction.typ {
+                    TransactionType::Scan { table_name } => {
+                        Ok(Transaction::Select {
+                            table: table_name.clone(),
+                            ops
+                        })
+                    },
+                    TransactionType::Insert { table, value } => {
+                        let value = self.compile_expr(catalog.clone(), value)?;
+
+                        match value {
+                            TransactionValue::Row(values) => {
+                                Ok(Transaction::Insert {
+                                    table: table.clone(),
+                                    values,
+                                    ops
+                                })
+                            },
+                            _ => Err(QueryError::ExpectedRow)
+                        }
+                    },
+                }
+            },
+            _ => Err(QueryError::NotATransaction),
         }
     }
 
-    fn compile_predicate(&self, predicate: &Predicate) -> QueryResult<Vec<TableOp>> {
-        match predicate {
-            Predicate::Comparison { left, op, right } => {
-                if let (PlanExpr::Column(col_name), PlanExpr::Literal(value)) = (&left, &right) {
-                    let col_idx = self.resolve_column_index(col_name)?;
-
-                    return Ok(vec![TableOp::Filter {
-                        column_index: col_idx,
-                        operator: op.clone(),
-                        value: value.clone(),
-                    }]);
+    pub fn compile_expr(
+        &mut self,
+        catalog: Arc<RwLockReadGuard<TableCatalog>>,
+        expr: &QueryExpr,
+    ) -> QueryResult<TransactionValue> {
+        match expr {
+            QueryExpr::Instance(values) => {
+                let mut compiled_values = vec![];
+                for (name, value) in values {
+                    let compiled_value = self.compile_expr(catalog.clone(), value)?;
+                    compiled_values.push((name.clone(), compiled_value));
                 }
-
-                let filter_fn = self.create_predicate_function(predicate)?;
-                Ok(vec![TableOp::PredicativeFilter(filter_fn)])
-            },
-            Predicate::And(predicates) => {
-                let mut all_ops = Vec::new();
-                for pred in predicates {
-                    let ops = self.compile_predicate(pred)?;
-                    all_ops.extend(ops);
-                }
-                Ok(all_ops)
-            },
-            _ => {
-                let filter_fn = self.create_predicate_function(predicate)?;
-                Ok(vec![TableOp::PredicativeFilter(filter_fn)])
+                Ok(TransactionValue::Row(compiled_values))
             }
+            QueryExpr::Literal(value) => {
+                Ok(TransactionValue::Literal(value.clone()))
+            }
+            u => todo!("Unimplemented expression: {:?}", u)
+        }
+    }
+
+    pub fn compile_transaction_ops(
+        &mut self,
+        catalog: Arc<RwLockReadGuard<TableCatalog>>,
+        transaction: &TransactionOp,
+    ) -> QueryResult<Vec<TableOp>> {
+        match transaction {
+            TransactionOp::Filter { predicate } => {
+                match &**predicate {
+                    PredicateExpr::Comparison { left, op, right } => {
+                        if let (QueryExpr::Column(col_name), QueryExpr::Literal(value)) = (&left, &right) {
+                            let col_idx = self.resolve_column_index(col_name)?;
+
+                            return Ok(vec![TableOp::Filter {
+                                column_index: col_idx,
+                                operator: op.clone(),
+                                value: value.clone(),
+                            }]);
+                        }
+
+                        let filter_fn = self.create_predicate_function(&*predicate)?;
+                        Ok(vec![TableOp::PredicativeFilter(filter_fn)])
+                    },
+                    _ => {
+                        let filter_fn = self.create_predicate_function(&*predicate)?;
+                        Ok(vec![TableOp::PredicativeFilter(filter_fn)])
+                    }
+                }
+            },
+            TransactionOp::Limit { count, offset } => {
+                Ok(vec![TableOp::Limit {
+                    count: *count,
+                    offset: offset.unwrap_or(0),
+                }])
+            },
         }
     }
 
@@ -154,7 +149,7 @@ impl PlanCompiler {
     }
 
     // TODO: implement
-    fn create_predicate_function(&self, predicate: &Predicate) -> QueryResult<Arc<dyn Fn(&Tuple) -> bool + Send + Sync>> {
+    fn create_predicate_function(&self, predicate: &PredicateExpr) -> QueryResult<Arc<dyn Fn(&Tuple) -> bool + Send + Sync>> {
         let pred = predicate.clone();
 
         let filter_fn = Arc::new(move |tuple: &Tuple| -> bool {
@@ -188,33 +183,5 @@ impl PlanCompiler {
             }
         }
         None
-    }
-}
-
-impl Debug for TableOp {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TableOp::Filter { column_index, operator, value } => {
-                write!(f, "Filter(column_index: {}, operator: {:?}, value: {:?})", column_index, operator, value)
-            },
-            TableOp::Insert(values) => {
-                write!(f, "Insert(values: {:?})", values)
-            },
-            TableOp::Project(columns) => {
-                write!(f, "Project(columns: {:?})", columns)
-            },
-            TableOp::Offset(offset) => {
-                write!(f, "Offset(offset: {})", offset)
-            },
-            TableOp::Limit(limit) => {
-                write!(f, "Limit(limit: {})", limit)
-            },
-            TableOp::PredicativeFilter(_) => {
-                write!(f, "PredicativeFilter")
-            },
-            TableOp::Map(_) => {
-                write!(f, "Map")
-            }
-        }
     }
 }

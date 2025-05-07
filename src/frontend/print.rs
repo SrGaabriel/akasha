@@ -88,7 +88,9 @@ impl<'a> Visitor<'a> for PrettyPrinter {
                 self.write_indent();
                 println!("Args:");
                 self.indent += 1;
-                self.visit(arena, *args);
+                for arg in args.iter() {
+                    self.visit(arena, *arg);
+                }
                 self.indent -= 1;
                 self.indent -= 1;
             }
