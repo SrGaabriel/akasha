@@ -76,8 +76,8 @@ impl Value {
             },
             Value::DateTime(dt) => {
                 let mut buf = vec![self.id()];
-                buf.extend(&dt.timestamp().to_le_bytes());
-                buf.extend(&(dt.timestamp_subsec_nanos()).to_le_bytes());
+                buf.extend(&dt.and_utc().timestamp().to_le_bytes());
+                buf.extend(&dt.and_utc().timestamp_subsec_nanos().to_le_bytes());
                 buf
             },
             Value::Long(l) => {

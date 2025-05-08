@@ -264,8 +264,8 @@ impl<'src> Lexer<'src> {
             '|' => TokenKind::Pipe,
             '\\' => TokenKind::Lambda,
             '=' => TokenKind::Equals,
-            '<' => TokenKind::GreaterThan,
-            '>' => TokenKind::LessThan,
+            '<' => TokenKind::LessThan,
+            '>' => TokenKind::GreaterThan,
             '\n' => TokenKind::Newline,
             '\r' => {
                 if self.peek() == Some('\n') {

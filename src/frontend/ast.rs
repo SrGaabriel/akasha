@@ -222,6 +222,13 @@ impl Arena {
         let name_id = self.intern_str(name);
         self.alloc(Expr::Let { name: name_id, value, body })
     }
+
+    pub fn extract_function_call(&self, id: NodeId) -> Option<(NodeId, Vec<NodeId>)> {
+        match self.get(id) {
+            Expr::FunctionCall { func, args } => Some((*func, args.to_vec())),
+            _ => None,
+        }
+    }
 }
 
 pub trait Visitor<'a> {

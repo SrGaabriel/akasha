@@ -1,99 +1,118 @@
+use crate::page::tuple::{Tuple, Value};
+use crate::query::op::TableOp;
+use crate::query::Transaction;
+use crate::table::heap::scan_table;
+use crate::table::{ColumnInfo, TableCatalog, TableInfo};
+use futures::Stream;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use futures::Stream;
-use crate::page::tuple::Tuple;
-use crate::query::err::{QueryError, QueryResult};
-use crate::query::Query;
-use crate::table::{PhysicalTable, TableCatalog};
-use crate::query::plan::{QueryPlanner, TableOp, PlanResult};
-use crate::table::heap::scan_table;
 
 pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
 
+// todo: have actual errors
+
 pub struct QueryExecutor {
-    catalog: Arc<RwLock<TableCatalog>>,
-    planner: Box<dyn QueryPlanner>,
+    catalog: Arc<RwLock<TableCatalog>>
+}
+
+pub enum PlanResult {
+    Stream(Vec<TableOp>),
+    ModifyData {
+        ops: Vec<TableOp>,
+        returning: Option<Vec<usize>>
+    },
 }
 
 impl QueryExecutor {
-    pub fn new(
-        catalog: Arc<RwLock<TableCatalog>>,
-        planner: Box<dyn QueryPlanner>
-    ) -> Self {
-        Self {catalog, planner}
+    pub fn new(catalog: Arc<RwLock<TableCatalog>>) -> Self {
+        Self {
+            catalog
+        }
     }
 
-    pub async fn execute_ops(
+    pub async fn execute(
         &self,
-        table: &PhysicalTable,
-        plan_result: PlanResult,
-    ) -> QueryResult<TupleStream> {
-        match plan_result {
-            PlanResult::Stream(ops) => {
-                let iter = scan_table(table.heap.clone()).await;
-                let initial_stream: TupleStream = Box::pin(iter);
-                let final_stream = ops.into_iter().fold(initial_stream, |stream, op| op.apply(stream));
-                Ok(final_stream)
-            },
-            PlanResult::ModifyData { ops, returning } => {
-                let mut inserted_tuples = Vec::new();
+        transaction: Transaction,
+    ) -> Result<Pin<Box<dyn Stream<Item = Tuple> + Send>>, String> {
+        match transaction {
+            Transaction::Select { table, ops } => {
+                let physical_table = self
+                    .catalog
+                    .read()
+                    .await
+                    .get_table(&table)
+                    .await
+                    .ok_or_else(|| format!("Table '{}' not found", table))?;
+                let heap = physical_table.heap.clone();
+                let base_stream = scan_table(heap).await;
 
-                for op in ops {
-                    match op {
-                        TableOp::Insert(values) => {
-                            let tuple = Tuple { values };
-                            let heap = table.heap.clone();
-                            let mut heap_lock = heap.write().await;
-                            heap_lock.insert_tuple(&tuple).await.unwrap();
+                Ok(Self::apply_ops(base_stream, ops))
+            }
+            Transaction::Insert { table, values, ops } => {
+                let physical_table = self
+                    .catalog
+                    .read()
+                    .await
+                    .get_table(&table)
+                    .await
+                    .ok_or_else(|| format!("Table '{}' not found", table))?;
+                let tuple = Self::build_tuple(&physical_table.info, values)?;
+                let heap = physical_table.heap.clone();
+                heap.write()
+                    .await
+                    .insert_tuple(&tuple)
+                    .await
+                    .map_err(|e| format!("Insert failed: {}", e))?;
 
-                            if returning.is_some() {
-                                inserted_tuples.push(tuple);
-                            }
-                        },
-                        _ => return Err(QueryError::InvalidOperation(
-                            "Only INSERT operations are supported in ModifyData".to_string()
-                        )),
-                    }
-                }
-
-                if let Some(columns) = returning {
-                    if !columns.is_empty() {
-                        let tuples = inserted_tuples
-                            .into_iter()
-                            .map(move |tuple| {
-                                let projected_values = columns.iter()
-                                    .map(|&idx| tuple.values[idx].clone())
-                                    .collect();
-                                Tuple { values: projected_values }
-                            });
-                        Ok(Box::pin(futures::stream::iter(tuples)))
-                    } else {
-                        Ok(Box::pin(futures::stream::iter(inserted_tuples)))
-                    }
-                } else {
-                    Ok(Box::pin(futures::stream::empty()))
-                }
+                // todo: make this opt-in (returning clause)
+                let base_stream = Box::pin(futures::stream::iter(vec![tuple]));
+                Ok(Self::apply_ops(base_stream, ops))
             }
         }
     }
 
-    pub async fn execute(&self, query: Query) -> QueryResult<impl Stream<Item = Tuple> + Send + '_> {
-        let table_name = match &query {
-            Query::Select(select) => &select.from,
-            Query::Insert(insert) => &insert.into,
-            Query::Update(update) => &update.table,
-            Query::Delete(delete) => &delete.table,
-        };
+    fn build_tuple(
+        table_info: &TableInfo,
+        values: Vec<(String, Value)>
+    ) -> Result<Tuple, String> {
+        let value_map: HashMap<String, Value> = values.into_iter().collect();
+        let columns: Vec<(String, ColumnInfo)> = table_info
+            .columns
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let mut tuple_values = Vec::new();
 
-        let catalog = self.catalog.read().await;
-        let table = catalog
-            .get_table(table_name)
-            .await
-            .ok_or(QueryError::TableNotFound(table_name.clone()))?;
-        drop(catalog);
+        for (col_name, col_info) in columns {
+            if let Some(val) = value_map.get(&col_name) {
+                tuple_values.push(Value::from(val.clone()));
+            } else if let Some(default) = &col_info.default {
+                tuple_values.push(default.clone());
+            } else if col_info.nullable {
+                tuple_values.push(Value::Null);
+            } else {
+                return Err(format!(
+                    "Missing value for non-nullable column '{}'",
+                    col_name
+                ));
+            }
+        }
+        Ok(Tuple { values: tuple_values })
+    }
 
-        let plan_result = self.planner.plan(&table, &query)?;
-        self.execute_ops(&table, plan_result).await
+    fn apply_ops<S>(
+        stream: S,
+        ops: Vec<TableOp>,
+    ) -> Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>
+    where
+        S: Stream<Item = Tuple> + Send + 'static,
+    {
+        let mut result_stream = Box::pin(stream) as Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
+        for op in ops {
+            result_stream = op.apply(result_stream);
+        }
+        result_stream
     }
 }

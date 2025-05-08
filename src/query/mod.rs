@@ -1,112 +1,163 @@
-pub mod err;
-pub mod exec;
-pub mod plan;
-pub mod new_plan;
+// This will probably have some redundant structs at the start, but we'll gradually be replacing old architecture with this one
 
-use std::collections::HashMap;
+pub mod transformer;
+pub mod err;
+pub mod optimizer;
+pub mod compiler;
+pub mod exec;
+pub mod op;
+
+use crate::frontend::ast::NodeId;
 use crate::page::tuple::Value;
+use crate::query::op::TableOp;
 
 #[derive(Debug, Clone)]
-pub enum Query {
-    Select(SelectQuery),
-    Insert(InsertQuery),
-    Update(UpdateQuery),
-    Delete(DeleteQuery),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SelectQuery {
-    pub from: String,
-    pub columns: Columns,
-    pub conditions: Option<Condition>,
-    pub order_by: Option<OrderBy>,
-    pub limit: Option<usize>,
-    pub offset: Option<usize>
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct InsertQuery {
-    pub into: TableRef,
-    pub columns: Vec<ColumnRef>,
-    pub values: Vec<Value>,
-    pub returning: Option<Columns>
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct UpdateQuery {
-    pub table: TableRef,
-    pub values: HashMap<ColumnRef, Value>,
-    pub conditions: Option<Condition>,
-    pub returning: Option<Columns>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeleteQuery {
-    pub table: TableRef,
-    pub conditions: Option<Condition>,
-    pub returning: Option<Columns>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Condition {
-    And(Vec<Condition>),
-    Or(Vec<Condition>),
-    Not(Box<Condition>),
-    Compare {
-        left: Expression,
-        op: ComparisonOperator,
-        right: Expression,
+pub enum Transaction {
+    Insert {
+        table: String,
+        values: Vec<(String, Value)>,
+        ops: Vec<TableOp>
+    },
+    Select {
+        table: String,
+        ops: Vec<TableOp>
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Expression {
-    Column(ColumnRef),
-    Value(Value),
-    Function {
-        name: String,
-        args: Vec<Expression>,
+#[derive(Debug, Clone)]
+pub enum QueryExpr {
+    Transaction {
+        typ: TransactionType,
+        operations: Vec<TransactionOp>,
     },
+
+    Bind {
+        input: Box<QueryExpr>,
+        func: Box<QueryExpr>,
+    },
+
+    Lambda {
+        params: Vec<String>,
+        body: NodeId
+    },
+
+    Reference(String),
+    Literal(Value),
+    Column(String),
+
     BinaryOp {
-        left: Box<Expression>,
+        left: Box<QueryExpr>,
         op: BinaryOperator,
-        right: Box<Expression>,
+        right: Box<QueryExpr>,
     },
-    Subquery(Box<SelectQuery>),
+
+    Apply {
+        func: Box<QueryExpr>,
+        args: Vec<QueryExpr>,
+    },
+
+    Binding {
+        name: String,
+        value: Box<QueryExpr>,
+        body: Box<QueryExpr>,
+    },
+
+    Predicate(Box<PredicateExpr>),
+    Instance(Vec<(String, QueryExpr)>),
+
+    BuiltInFunction {
+        name: String,
+    },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ComparisonOperator {
-    Eq,
-    Neq,
-    Gt,
-    Lt,
-    GtEq,
-    LtEq,
-    Like,
-    NotLike
+#[derive(Debug, Clone)]
+pub enum TransactionType {
+    Scan {
+        table_name: String
+    },
+    Insert {
+        table: String,
+        value: Box<QueryExpr>
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
+pub enum TransactionOp {
+    Filter {
+        predicate: Box<PredicateExpr>,
+    },
+    Limit {
+        count: usize,
+        offset: Option<usize>,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum JoinType {
+    Inner,
+    Left,
+    Right,
+    Full,
+}
+
+#[derive(Debug, Clone)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectionExpr {
+    pub expr: QueryExpr,
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AggregateExpr {
+    pub function: String,
+    pub expr: QueryExpr,
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PredicateExpr {
+    Comparison {
+        left: QueryExpr,
+        op: ComparisonOperator,
+        right: QueryExpr,
+    },
+    And(Box<PredicateExpr>, Box<PredicateExpr>),
+    Or(Box<PredicateExpr>, Box<PredicateExpr>),
+    Not(Box<PredicateExpr>),
+    IsNull(QueryExpr),
+    IsNotNull(QueryExpr),
+    In(QueryExpr, Vec<QueryExpr>),
+    Exists(Box<QueryExpr>)
+}
+
+type SymbolInfo = QueryExpr;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BinaryOperator {
     Add,
     Subtract,
     Multiply,
     Divide,
-    Modulo
+    Modulus,
+    Power,
+    Concat,
+    And,
+    Or,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum OrderBy {
-    Asc(ColumnRef),
-    Desc(ColumnRef),
-}
-
-pub type TableRef = String;
-pub type ColumnRef = String;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Columns {
-    All,
-    List(Vec<ColumnRef>),
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ComparisonOperator {
+    Eq,
+    Neq,
+    Gt,
+    GtEq,
+    Lt,
+    LtEq,
+    Like,
+    NotLike
 }

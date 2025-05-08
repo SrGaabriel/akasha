@@ -1,22 +1,21 @@
 #![feature(let_chains)]
 
-use std::collections::HashMap;
 use crate::frontend::ast::{Arena, AstTraversal};
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::parse_expression;
 use crate::frontend::print::PrettyPrinter;
 use crate::page::file::PageFileIO;
 use crate::page::pool::BufferPool;
-use crate::query::plan::planners::DefaultQueryPlanner;
+use crate::query::compiler::PlanCompiler;
+use crate::query::exec::QueryExecutor;
+use crate::query::optimizer::IdentityOptimizer;
+use crate::query::transformer::AstToQueryTransformer;
 use crate::table::{ColumnInfo, TableCatalog, TableInfo};
+use std::collections::HashMap;
 use std::sync::Arc;
+use futures::StreamExt;
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
-use tokio_stream::StreamExt;
-use crate::query::new_plan::compiler::PlanCompiler;
-use crate::query::new_plan::exec::QueryExecutor;
-use crate::query::new_plan::optimizer::IdentityOptimizer;
-use crate::query::new_plan::transformer::AstToQueryTransformer;
 
 pub mod page;
 pub mod query;
@@ -63,7 +62,7 @@ async fn main() {
     let query_file = tokio::fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .open("queries/insert.aka")
+        .open("queries/select.aka")
         .await
         .expect("Failed to open query file");
 
@@ -84,7 +83,6 @@ async fn main() {
 
     let mut transformer = AstToQueryTransformer::new(
         &arena,
-        Arc::clone(&catalog),
         Box::new(IdentityOptimizer),
     );
     let transformed = transformer.transform(root_id).expect("Failed to transform AST");
@@ -95,12 +93,11 @@ async fn main() {
     let compiled = compiler.compile(&transformed, catalog_lock).expect("Failed to compile plan");
     println!("Compiled: {:?}", compiled);
 
-    let mut executor = QueryExecutor::new(catalog.clone());
-    let mut plan = executor.execute_transaction(compiled).await.expect("Failed to execute plan");
+    let executor = QueryExecutor::new(catalog.clone());
+    let mut plan = executor.execute(compiled).await.expect("Failed to execute plan");
 
-    // let's iterate through the stream
     println!("Plan results: ");
-    // while let Some(tuple) = plan.next().await {
-    //     println!("{:?}", tuple);
-    // }
+    while let Some(tuple) = plan.next().await {
+        println!("{:?}", tuple);
+    }
 }

@@ -1,4 +1,4 @@
-use crate::query::new_plan::QueryExpr;
+use crate::query::QueryExpr;
 
 pub trait QueryOptimizer {
     fn optimize(&self, plan: QueryExpr) -> QueryExpr;

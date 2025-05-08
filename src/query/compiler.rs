@@ -1,19 +1,20 @@
-use crate::page::tuple::Tuple;
+use crate::page::tuple::{Tuple, Value};
 use crate::query::err::{QueryError, QueryResult};
-use crate::query::new_plan::op::TableOp;
-use crate::query::new_plan::{PredicateExpr, ProjectionExpr, QueryExpr, SortDirection, SymbolInfo, Transaction, TransactionOp, TransactionType, TransactionValue};
+use crate::query::op::TableOp;
+use crate::query::{PredicateExpr, ProjectionExpr, QueryExpr, SymbolInfo, Transaction, TransactionOp, TransactionType};
 use crate::table::TableCatalog;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLockReadGuard;
 
-pub struct PlanCompiler {
-    symbol_table_stack: Vec<HashMap<String, SymbolInfo>>,
+#[derive(Debug, Clone)]
+pub enum TransactionValue {
+    Row(Vec<(String, Value)>),
+    Literal(Value)
 }
 
-struct SortOp {
-    column_index: usize,
-    direction: SortDirection
+pub struct PlanCompiler {
+    symbol_table_stack: Vec<HashMap<String, SymbolInfo>>,
 }
 
 impl PlanCompiler {
@@ -33,9 +34,7 @@ impl PlanCompiler {
                 self.push_scope();
 
                 self.add_symbol(name.clone(), *value.clone());
-
                 let result = self.compile(body, catalog.clone())?;
-
                 self.pop_scope();
 
                 Ok(result)
@@ -47,14 +46,14 @@ impl PlanCompiler {
                     Err(QueryError::SymbolNotFound(name.clone()))
                 }
             },
-            QueryExpr::Transaction(transaction) => {
+            QueryExpr::Transaction { operations, typ } => {
                 let mut ops = vec![];
-                for op in &transaction.operations {
+                for op in operations {
                     let compiled_op = self.compile_transaction_ops(catalog.clone(), op)?;
                     ops.extend(compiled_op);
                 }
 
-                match &transaction.typ {
+                match &typ {
                     TransactionType::Scan { table_name } => {
                         Ok(Transaction::Select {
                             table: table_name.clone(),
@@ -90,7 +89,10 @@ impl PlanCompiler {
             QueryExpr::Instance(values) => {
                 let mut compiled_values = vec![];
                 for (name, value) in values {
-                    let compiled_value = self.compile_expr(catalog.clone(), value)?;
+                    let compiled_value = match self.compile_expr(catalog.clone(), value)? {
+                        TransactionValue::Literal(value) => Ok(value),
+                        TransactionValue::Row(_) => Err(QueryError::RowCannotBeEmbeddedIntoAnotherRow)
+                    }?;
                     compiled_values.push((name.clone(), compiled_value));
                 }
                 Ok(TransactionValue::Row(compiled_values))
@@ -145,7 +147,7 @@ impl PlanCompiler {
 
     // TODO: implement
     fn resolve_column_index(&self, name: &str) -> QueryResult<usize> {
-        Ok(0)
+        Ok(1)
     }
 
     // TODO: implement

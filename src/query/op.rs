@@ -77,7 +77,6 @@ impl TableOp {
                 Box::pin(stream.map(move |tuple| map_fn(&tuple)))
             },
             TableOp::Limit { count, offset } => Box::pin(stream.skip(offset).take(count)), // todo: fix
-            _ => Box::pin(stream),
         }
     }
 }

@@ -53,7 +53,7 @@ pub struct TableHeapIterator {
     buffer_pool: Arc<RwLock<BufferPool>>,
     current_page_index: usize,
     current_slot_index: usize,
-    current_future: Option<Pin<Box<dyn futures::Future<Output = Option<(Tuple, usize, usize)>> + Send>>>,
+    current_future: Option<Pin<Box<dyn Future<Output = Option<(Tuple, usize, usize)>> + Send>>>,
 }
 
 impl TableHeapIterator {

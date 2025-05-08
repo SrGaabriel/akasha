@@ -126,9 +126,14 @@ impl<'src> Parser<'src> {
         while self.peek_is_any(&[TokenKind::Application]) {
             self.consume()?;
             let right = self.comparison_expression()?;
-            left = self.arena.create_function_call(right, &[left]);
-        }
 
+            if let Some((func, mut args)) = self.arena.extract_function_call(right) {
+                args.push(left);
+                left = self.arena.create_function_call(func, &args);
+            } else {
+                left = self.arena.create_function_call(right, &[left]);
+            }
+        }
         Ok(left)
     }
 

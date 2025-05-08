@@ -1,15 +1,11 @@
 use crate::frontend::ast::{Arena, Expr, NodeId};
 use crate::frontend::lexer::TokenKind;
 use crate::page::tuple::Value;
-use crate::query::new_plan::err::TransformError;
-use crate::query::new_plan::optimizer::QueryOptimizer;
-use crate::query::new_plan::{PredicateExpr, QueryExpr, TransactionExpr, TransactionOp, TransactionType};
+use crate::query::err::TransformError;
+use crate::query::optimizer::QueryOptimizer;
+use crate::query::{PredicateExpr, QueryExpr, TransactionOp, TransactionType};
 use crate::query::{BinaryOperator, ComparisonOperator};
-use crate::table::TableCatalog;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use crate::query::new_plan::op::TableOp;
 
 struct BuiltInTransactionFunction {
     name: String,
@@ -19,9 +15,7 @@ struct BuiltInTransactionFunction {
 
 pub struct AstToQueryTransformer<'a> {
     arena: &'a Arena,
-    catalog: Arc<RwLock<TableCatalog>>,
     optimizer: Box<dyn QueryOptimizer>,
-    table_aliases: HashMap<String, String>,
     current_scope: Vec<SymbolTable>,
     current_row_variable: Option<String>,
     built_in_functions: HashMap<String, BuiltInTransactionFunction>,
@@ -38,7 +32,7 @@ pub enum SymbolInfo {
 }
 
 impl<'a> AstToQueryTransformer<'a> {
-    pub fn new(arena: &'a Arena, catalog: Arc<RwLock<TableCatalog>>, optimizer: Box<dyn QueryOptimizer>) -> Self {
+    pub fn new(arena: &'a Arena, optimizer: Box<dyn QueryOptimizer>) -> Self {
         let mut built_in_functions = HashMap::new();
 
         // Define built-in transaction functions
@@ -49,21 +43,21 @@ impl<'a> AstToQueryTransformer<'a> {
                 arity: 1,
                 apply: |_, args| {
                     if let QueryExpr::Literal(Value::Text(table_name)) = &args[0] {
-                        Ok(QueryExpr::Transaction(TransactionExpr {
+                        Ok(QueryExpr::Transaction {
                             typ: TransactionType::Scan {
                                 table_name: table_name.clone(),
                             },
                             operations: vec![]
-                        }))
+                        })
                     } else if let QueryExpr::Reference(table_name) = &args[0] {
-                        Ok(QueryExpr::Transaction(TransactionExpr {
+                        Ok(QueryExpr::Transaction {
                             typ: TransactionType::Scan {
                                 table_name: table_name.clone(),
                             },
                             operations: vec![]
-                        }))
+                        })
                     } else {
-                        Err(TransformError::InvalidArgument)
+                        Err(TransformError::InvalidArgument("scan".to_string()))
                     }
                 },
             },
@@ -73,7 +67,7 @@ impl<'a> AstToQueryTransformer<'a> {
             "filter".to_string(),
             BuiltInTransactionFunction {
                 name: "filter".to_string(),
-                arity: 1,
+                arity: 2,
                 apply: |transformer, mut args| {
                     if let QueryExpr::Lambda { params, body, .. } = &args[0] {
                         if params.len() == 1 {
@@ -88,14 +82,16 @@ impl<'a> AstToQueryTransformer<'a> {
                             transformer.pop_scope();
                             transformer.clear_row_variable();
 
-                            let input = args.get_mut(1).ok_or_else(|| TransformError::InvalidArgument)?;
+                            println!("Args: {args:?}");
+                            let input = args.get_mut(1).ok_or_else(|| TransformError::InvalidArgument("filter".to_string()))?;
+                            println!("Inputado: {input:?}");
                             match input {
-                                QueryExpr::Transaction(transaction) => {
-                                    transaction.operations.push(TransactionOp::Filter {
+                                QueryExpr::Transaction { operations, .. } => {
+                                    operations.push(TransactionOp::Filter {
                                         predicate: Box::new(predicate),
                                     });
                                 }
-                                _ => return Err(TransformError::InvalidArgument),
+                                _ => return Err(TransformError::InvalidArgument("filter".to_string())),
                             }
                             Ok(input.clone())
                         } else {
@@ -117,15 +113,15 @@ impl<'a> AstToQueryTransformer<'a> {
                     if let QueryExpr::Reference(table_name) = &args[0] {
                         let value = args[1].clone();
 
-                        Ok(QueryExpr::Transaction(TransactionExpr {
+                        Ok(QueryExpr::Transaction {
                             typ: TransactionType::Insert {
                                 table: table_name.clone(),
                                 value: Box::new(value)
                             },
                             operations: vec![]
-                        }))
+                        })
                     } else {
-                        Err(TransformError::InvalidArgument)
+                        Err(TransformError::InvalidArgument("insert".to_string()))
                     }
                 },
             },
@@ -133,9 +129,7 @@ impl<'a> AstToQueryTransformer<'a> {
 
         Self {
             arena,
-            catalog,
             optimizer,
-            table_aliases: HashMap::new(),
             current_scope: vec![SymbolTable { symbols: HashMap::new() }],
             current_row_variable: None,
             built_in_functions,
@@ -217,7 +211,7 @@ impl<'a> AstToQueryTransformer<'a> {
                     TokenKind::Minus => BinaryOperator::Subtract,
                     TokenKind::Asterisk => BinaryOperator::Multiply,
                     TokenKind::Slash => BinaryOperator::Divide,
-                    TokenKind::Percent => BinaryOperator::Modulo,
+                    TokenKind::Percent => BinaryOperator::Modulus,
                     _ => return Err(TransformError::UnsupportedOperator(op.clone())),
                 };
 
