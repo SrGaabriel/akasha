@@ -116,6 +116,11 @@ impl Arena {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.interner = Interner::new();
+    }
+
     #[inline]
     pub fn alloc(&mut self, expr: Expr) -> NodeId {
         let id = NodeId(self.nodes.len() as u32);

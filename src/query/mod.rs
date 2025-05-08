@@ -16,7 +16,8 @@ pub enum Transaction {
     Insert {
         table: String,
         values: Vec<(String, Value)>,
-        ops: Vec<TableOp>
+        ops: Vec<TableOp>,
+        returning: bool
     },
     Select {
         table: String,

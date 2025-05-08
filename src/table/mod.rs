@@ -25,6 +25,7 @@ impl TableInfo {
 pub struct ColumnInfo {
     pub data_type: DataType,
     pub nullable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>
 }
 
@@ -89,17 +90,20 @@ impl TableCatalog {
         self.tables.get(name).cloned()
     }
 
-    pub async fn persist(&self, base_path: String) -> Result<(), String> {
+    pub async fn persist(&self, base_path: String) -> std::io::Result<()> {
         let tables: Vec<TableMetadata> = self.tables.values().map(|t| TableMetadata {
             name: t.name.clone(),
             file_id: t.file_id,
             info: t.info.clone(),
         }).collect();
 
-        let json = serde_json::to_string_pretty(&tables).map_err(|e| e.to_string())?;
+        let json = serde_json::to_string_pretty(&tables).map_err(|e| e.to_string()).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::Other, e)
+        })?;
         let path = format!("{}/catalog.json", base_path);
-        let mut file = tokio::fs::File::create(path).await.map_err(|e| e.to_string())?;
-        file.write_all(json.as_bytes()).await.map_err(|e| e.to_string())
+        let mut file = tokio::fs::File::create(path).await?;
+        file.write_all(json.as_bytes()).await?;
+        file.flush().await
     }
 
     pub async fn load(base_path: &str, buffer_pool: Arc<RwLock<BufferPool>>) -> Result<Self, String> {

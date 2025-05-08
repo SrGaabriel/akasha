@@ -47,10 +47,9 @@ impl QueryExecutor {
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
                 let heap = physical_table.heap.clone();
                 let base_stream = scan_table(heap).await;
-
                 Ok(Self::apply_ops(base_stream, ops))
             }
-            Transaction::Insert { table, values, ops } => {
+            Transaction::Insert { table, values, ops, returning } => {
                 let physical_table = self
                     .catalog
                     .read()
@@ -66,9 +65,12 @@ impl QueryExecutor {
                     .await
                     .map_err(|e| format!("Insert failed: {}", e))?;
 
-                // todo: make this opt-in (returning clause)
-                let base_stream = Box::pin(futures::stream::iter(vec![tuple]));
-                Ok(Self::apply_ops(base_stream, ops))
+                if returning {
+                    Ok(Box::pin(futures::stream::iter(vec![])))
+                } else {
+                    let base_stream = Box::pin(futures::stream::iter(vec![tuple]));
+                    Ok(Self::apply_ops(base_stream, ops))
+                }
             }
         }
     }

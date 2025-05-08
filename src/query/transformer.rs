@@ -35,7 +35,6 @@ impl<'a> AstToQueryTransformer<'a> {
     pub fn new(arena: &'a Arena, optimizer: Box<dyn QueryOptimizer>) -> Self {
         let mut built_in_functions = HashMap::new();
 
-        // Define built-in transaction functions
         built_in_functions.insert(
             "scan".to_string(),
             BuiltInTransactionFunction {
@@ -82,9 +81,7 @@ impl<'a> AstToQueryTransformer<'a> {
                             transformer.pop_scope();
                             transformer.clear_row_variable();
 
-                            println!("Args: {args:?}");
                             let input = args.get_mut(1).ok_or_else(|| TransformError::InvalidArgument("filter".to_string()))?;
-                            println!("Inputado: {input:?}");
                             match input {
                                 QueryExpr::Transaction { operations, .. } => {
                                     operations.push(TransactionOp::Filter {
@@ -340,7 +337,6 @@ impl<'a> AstToQueryTransformer<'a> {
         }
     }
 
-    // Helper methods
     fn push_scope(&mut self) {
         self.current_scope.push(SymbolTable { symbols: HashMap::new() });
     }

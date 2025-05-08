@@ -68,7 +68,8 @@ impl PlanCompiler {
                                 Ok(Transaction::Insert {
                                     table: table.clone(),
                                     values,
-                                    ops
+                                    ops,
+                                    returning: false // todo: implement returning
                                 })
                             },
                             _ => Err(QueryError::ExpectedRow)

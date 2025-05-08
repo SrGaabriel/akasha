@@ -177,7 +177,6 @@ impl<'src> Parser<'src> {
             match self.field_access() {
                 Ok(item) => items.push(item),
                 Err(err) => {
-                    println!("Debug application end error: {err:?}");
                     self.restore_position(current_pos);
                     break;
                 }

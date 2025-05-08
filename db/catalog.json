@@ -6,13 +6,11 @@
       "columns": {
         "name": {
           "data_type": "Int",
-          "nullable": false,
-          "default": null
+          "nullable": false
         },
         "age": {
           "data_type": "Int",
-          "nullable": false,
-          "default": null
+          "nullable": false
         }
       }
     }

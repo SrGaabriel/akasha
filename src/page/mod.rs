@@ -1,6 +1,7 @@
 pub mod file;
 pub mod pool;
 pub mod tuple;
+pub mod io;
 
 use std::mem::size_of;
 use crate::page::tuple::Tuple;
