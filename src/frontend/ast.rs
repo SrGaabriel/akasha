@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
+use crate::frontend::print::PrettyPrinter;
 
 #[derive(Default)]
 pub struct Interner {
@@ -289,10 +290,6 @@ impl<'a> AstTraversal<'a> {
 pub struct Evaluator;
 
 impl Evaluator {
-    pub fn new() -> Self {
-        Self
-    }
-
     pub fn evaluate(&mut self, arena: &Arena, node_id: NodeId) -> Value {
         match arena.get(node_id) {
             Expr::Reference(name) => {
@@ -348,4 +345,16 @@ pub enum Value {
     String(String),
     List(Vec<Value>),
     Error(String),
+}
+
+impl Default for PrettyPrinter {
+    fn default() -> Self {
+        PrettyPrinter::new()
+    }
+}
+
+impl Default for Evaluator {
+    fn default() -> Self {
+        Evaluator
+    }
 }

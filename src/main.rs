@@ -18,7 +18,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
-use crate::page::io::PageFileIO;
+use crate::page::io::{IoManager, PageFileIO};
+use crate::page::tuple::Tuple;
 
 pub mod page;
 pub mod query;
@@ -62,7 +63,7 @@ impl Drop for DebugTimer {
 }
 
 struct QueryEngine {
-    buffer_pool: Arc<RwLock<BufferPool>>,
+    buffer_pool: Arc<BufferPool>,
     catalog: Arc<RwLock<TableCatalog>>,
     compiler: PlanCompiler,
     arena: Arena,
@@ -78,7 +79,8 @@ impl QueryEngine {
         let file_io = Arc::new(PageFileIO::new(home_dir.clone()));
         file_io.create_home().await?;
 
-        let buffer_pool = Arc::new(RwLock::new(BufferPool::new(16, file_io)));
+        let io = Arc::new(IoManager::new(file_io.clone()));
+        let buffer_pool = BufferPool::new(io);
 
         let catalog = match TableCatalog::load("db", Arc::clone(&buffer_pool)).await {
             Ok(cat) => {
@@ -86,7 +88,7 @@ impl QueryEngine {
                 cat
             },
             Err(_) => {
-                let mut cat = TableCatalog::new();
+                let mut cat = TableCatalog::new(buffer_pool.clone());
                 let mut columns = HashMap::new();
                 columns.insert("name".to_string(), ColumnInfo {
                     data_type: page::tuple::DataType::Int,
@@ -100,11 +102,10 @@ impl QueryEngine {
                 });
                 cat.create_table(
                     "users".to_string(),
-                    TableInfo { columns },
-                    buffer_pool.clone()
+                    TableInfo { columns }
                 ).await?;
 
-                cat.persist(home_dir).await?;
+                cat.persist(&*home_dir).await?;
                 cat
             }
         };
@@ -163,18 +164,16 @@ impl QueryEngine {
         drop(compile_timer);
 
         let execute_timer = DebugTimer::new("Query execution", self.debug_mode);
-        let mut plan = self.executor.execute(compiled).await?;
+        let mut plan = self.executor.execute(&compiled).await?;
+        let tuples = plan.collect::<Vec<Tuple>>().await;
 
-        let mut count = 0;
-        while let Some(tuple) = plan.next().await {
-            println!("{:?}", tuple);
-            count += 1;
-        }
+        let execution_elapsed = execute_timer.elapsed();
+        let total_elapsed = total_timer.elapsed();
 
-        if self.debug_mode {
-            println!("Returned {} rows", count);
-        }
-        println!("Query executed in {} and completed in {}", execute_timer.elapsed(), total_timer.elapsed());
+        println!("Result: {:?}", tuples.len());
+
+        println!("Query executed in {} and completed in {}", execution_elapsed, total_elapsed);
+        println!("Executed: {:?}", compiled);
 
         Ok(())
     }

@@ -3,103 +3,76 @@ pub mod pool;
 pub mod tuple;
 pub mod io;
 
-use std::mem::size_of;
 use crate::page::tuple::Tuple;
+use std::mem::size_of;
 
 pub const PAGE_SIZE: usize = 4096;
 
-pub struct Slot {
-    pub offset: u16,
-    pub length: u16,
+#[repr(C)]
+struct SlotMeta {
+    offset: u16,
+    length: u16,
 }
 
-#[derive(Clone, Debug)]
-pub struct Page {
+pub struct Page<'a> {
     pub index: u32,
-    pub data: [u8; PAGE_SIZE],
-    pub slot_count: usize,
-    pub free_space_pointer: u16,
+    pub data: &'a mut [u8; PAGE_SIZE],
 }
 
-impl Page {
-    pub fn new(index: u32) -> Self {
-        Self {
-            index,
-            data: [0; PAGE_SIZE],
-            slot_count: 0,
-            free_space_pointer: PAGE_SIZE as u16,
-        }
+impl<'a> Page<'a> {
+    pub unsafe fn from_raw(index: u32, ptr: *mut u8) -> Self {
+        let data = &mut *(ptr as *mut [u8; PAGE_SIZE]);
+        Page { index, data }
+    }
+
+    pub fn init_new(&mut self) {
+        self.data.fill(0);
+        self.data[0..2].copy_from_slice(&0u16.to_le_bytes());
+        self.data[2..4].copy_from_slice(&(PAGE_SIZE as u16).to_le_bytes());
     }
 
     pub fn insert_tuple(&mut self, tuple: &Tuple) -> Result<usize, String> {
         let bytes = tuple.to_bytes();
-        let tuple_len = bytes.len() as u16;
-
-        let slot_dir_end = 4 + (self.slot_count + 1) * size_of::<Slot>();
-        let required_space = tuple_len as usize;
-        if self.free_space_pointer as usize <= slot_dir_end + required_space {
-            return Err(format!("Not enough space in page: free_space={}, needed={}",
-                               self.free_space_pointer, slot_dir_end + required_space));
+        let len = bytes.len() as u16;
+        let d = &mut self.data;
+        let sc = u16::from_le_bytes([d[0], d[1]]);
+        let fsp = u16::from_le_bytes([d[2], d[3]]);
+        let slot_dir_end = 4 + (sc as usize + 1) * size_of::<SlotMeta>();
+        if (fsp as usize) < slot_dir_end + len as usize {
+            return Err("full".into());
         }
-
-        let tuple_start = self.free_space_pointer as usize - tuple_len as usize;
-        let offset = tuple_start as u16;
-
-        self.data[offset as usize..(offset + tuple_len) as usize]
-            .copy_from_slice(&bytes);
-
-        let slot = Slot { offset, length: tuple_len };
-        self.write_slot(self.slot_count, &slot);
-
-        self.free_space_pointer = offset;
-        let slot_index = self.slot_count;
-        self.slot_count += 1;
-
-        Ok(slot_index)
+        let start = fsp as usize - len as usize;
+        d[start..start + len as usize].copy_from_slice(&bytes);
+        let meta = SlotMeta { offset: start as u16, length: len };
+        let pos = 4 + sc as usize * size_of::<SlotMeta>();
+        d[pos..pos + 2].copy_from_slice(&meta.offset.to_le_bytes());
+        d[pos + 2..pos + 4].copy_from_slice(&meta.length.to_le_bytes());
+        let sc1 = sc + 1;
+        d[0..2].copy_from_slice(&sc1.to_le_bytes());
+        d[2..4].copy_from_slice(&meta.offset.to_le_bytes());
+        Ok(sc as usize)
     }
 
-    fn write_slot(&mut self, index: usize, slot: &Slot) {
-        let pos = 4 + index * size_of::<Slot>();
-        self.data[pos..pos + 2].copy_from_slice(&slot.offset.to_le_bytes());
-        self.data[pos + 2..pos + 4].copy_from_slice(&slot.length.to_le_bytes());
-    }
-
-    fn read_slot(&self, index: usize) -> Option<Slot> {
-        if index >= self.slot_count {
+    pub fn get_tuple(&self, idx: usize) -> Option<Tuple> {
+        let d = &self.data;
+        let sc = u16::from_le_bytes([d[0], d[1]]) as usize;
+        if idx >= sc {
             return None;
         }
-
-        let pos = 4 + index * size_of::<Slot>();
-        let offset = u16::from_le_bytes(self.data[pos..pos + 2].try_into().ok()?);
-        let length = u16::from_le_bytes(self.data[pos + 2..pos + 4].try_into().ok()?);
-        Some(Slot { offset, length })
-    }
-
-    pub fn get_tuple(&self, index: usize) -> Option<Tuple> {
-        let slot = self.read_slot(index)?;
-        let end = (slot.offset + slot.length) as usize;
-        let slice = self.data.get(slot.offset as usize..end)?;
+        let pos = 4 + idx * size_of::<SlotMeta>();
+        let offset = u16::from_le_bytes([d[pos], d[pos + 1]]) as usize;
+        let length = u16::from_le_bytes([d[pos + 2], d[pos + 3]]) as usize;
+        let slice = &d[offset..offset + length];
         Some(Tuple::from_bytes(slice))
     }
 
-    pub fn from_bytes(index: u32, data: [u8; PAGE_SIZE]) -> Self {
-        let slot_count = u16::from_le_bytes([data[0], data[1]]) as usize;
-        let free_space_pointer = u16::from_le_bytes([data[2], data[3]]);
-
-        Self {
-            index,
-            data,
-            slot_count,
-            free_space_pointer,
-        }
+    pub fn from_bytes(index: u32, data: &'a mut [u8; PAGE_SIZE]) -> Self {
+        Page { index, data }
     }
 
     pub fn to_bytes(&self) -> [u8; PAGE_SIZE] {
-        let mut out = self.data;
-
-        out[0..2].copy_from_slice(&(self.slot_count as u16).to_le_bytes());
-        out[2..4].copy_from_slice(&self.free_space_pointer.to_le_bytes());
-
-        out
+        let mut bytes = [0; PAGE_SIZE];
+        bytes.copy_from_slice(self.data);
+        bytes
     }
 }

@@ -292,7 +292,6 @@ impl<'src> Parser<'src> {
         Ok(self.arena.create_array(&items))
     }
 
-    // it goes like this: { name = "value", arg2 = 5 }, etc..
     fn instance_expr(&mut self) -> Result<NodeId, ParseError<'src>> {
         self.expect(TokenKind::LeftBraces)?;
         let mut items = Vec::new();

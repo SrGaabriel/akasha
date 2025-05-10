@@ -1,5 +1,6 @@
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
+
 #[derive(Clone, Debug)]
 pub struct Tuple {
     pub values: Vec<Value>,

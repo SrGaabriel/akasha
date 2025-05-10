@@ -34,38 +34,37 @@ impl QueryExecutor {
 
     pub async fn execute(
         &self,
-        transaction: Transaction,
+        transaction: &Transaction,
     ) -> Result<Pin<Box<dyn Stream<Item = Tuple> + Send>>, String> {
         match transaction {
             Transaction::Select { table, ops } => {
-                let physical_table = self
+                let catalog = self
                     .catalog
                     .read()
-                    .await
+                    .await;
+                let physical_table = catalog
                     .get_table(&table)
-                    .await
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
                 let heap = physical_table.heap.clone();
                 let base_stream = scan_table(heap).await;
                 Ok(Self::apply_ops(base_stream, ops))
             }
             Transaction::Insert { table, values, ops, returning } => {
-                let physical_table = self
+                let catalog = self
                     .catalog
                     .read()
-                    .await
+                    .await;
+                let physical_table = catalog
                     .get_table(&table)
-                    .await
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
-                let tuple = Self::build_tuple(&physical_table.info, values)?;
+                let tuple = Self::build_tuple(&physical_table.info, values.clone())?;
                 let heap = physical_table.heap.clone();
-                heap.write()
-                    .await
+                heap
                     .insert_tuple(&tuple)
                     .await
                     .map_err(|e| format!("Insert failed: {}", e))?;
 
-                if returning {
+                if *returning {
                     Ok(Box::pin(futures::stream::iter(vec![])))
                 } else {
                     let base_stream = Box::pin(futures::stream::iter(vec![tuple]));
@@ -106,7 +105,7 @@ impl QueryExecutor {
 
     fn apply_ops<S>(
         stream: S,
-        ops: Vec<TableOp>,
+        ops: &Vec<TableOp>,
     ) -> Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>
     where
         S: Stream<Item = Tuple> + Send + 'static,

@@ -1,98 +1,134 @@
-use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::{Acquire, Release, Relaxed, AcqRel}};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use crate::page::io::PageFileIO;
-use crate::page::Page;
+use crate::page::PAGE_SIZE;
+use std::cell::UnsafeCell;
+use crate::page::io::IoManager;
 
-#[derive(Clone, Debug)]
-pub struct Frame {
-    pub(crate) page: Page,
-    pub(crate) is_dirty: bool,
-    pin_count: usize,
+const SHARD_COUNT: usize = 4;
+const SLOTS_PER_SHARD: usize = 1024;
+
+fn make_key(file_id: u32, page_id: u32) -> u64 {
+    ((file_id as u64) << 32) | page_id as u64
+}
+
+struct Slot {
+    key: AtomicU64,
+    ref_bit: AtomicBool,
+    pin: AtomicUsize,
+    dirty: AtomicBool,
+    buf: UnsafeCell<[u8; PAGE_SIZE]>,
+}
+
+unsafe impl Send for Slot {}
+unsafe impl Sync for Slot {}
+
+impl Slot {
+    fn new() -> Self {
+        Slot {
+            key: AtomicU64::new(0),
+            ref_bit: AtomicBool::new(false),
+            pin: AtomicUsize::new(0),
+            dirty: AtomicBool::new(false),
+            buf: UnsafeCell::new([0u8; PAGE_SIZE]),
+        }
+    }
+}
+
+struct Shard {
+    slots: Box<[Slot]>,
+    hand: AtomicUsize,
+    io: Arc<IoManager>,
+}
+
+impl Shard {
+    fn new(io: Arc<IoManager>) -> Self {
+        let mut v = Vec::with_capacity(SLOTS_PER_SHARD);
+        for _ in 0..SLOTS_PER_SHARD { v.push(Slot::new()); }
+        Shard { slots: v.into_boxed_slice(), hand: AtomicUsize::new(0), io }
+    }
+
+    async fn get_page(&self, file_id: u32, page_id: u32) -> *mut u8 {
+        let key = make_key(file_id, page_id);
+
+        for slot in self.slots.iter() {
+            if slot.key.load(Acquire) == key {
+                loop {
+                    let current_pin = slot.pin.load(Acquire);
+                    if current_pin == usize::MAX {
+                        break;
+                    }
+                    if slot.pin.compare_exchange(current_pin, current_pin + 1, AcqRel, Relaxed).is_ok() {
+                        slot.ref_bit.store(true, Release);
+                        return slot.buf.get().cast();
+                    }
+                }
+            }
+        }
+
+        loop {
+            let idx = self.hand.fetch_add(1, Relaxed) % SLOTS_PER_SHARD;
+            let s = &self.slots[idx];
+
+            if s.pin.compare_exchange(0, usize::MAX, AcqRel, Relaxed).is_ok() {
+                if s.ref_bit.swap(false, AcqRel) {
+                    s.pin.store(0, Release);
+                    continue;
+                }
+                let old_key = s.key.load(Acquire);
+                s.key.store(key, Release);
+                if s.dirty.swap(false, Acquire) {
+                    let fid = (old_key >> 32) as u32;
+                    let pid = old_key as u32;
+                    let bytes = unsafe {
+                        let ptr = s.buf.get();
+                        (&*ptr)[..].to_vec()
+                    };
+                    unsafe { self.io.schedule_write(fid, pid, bytes) };
+                }
+                unsafe { self.io.read_into_buf(file_id, page_id, &mut *s.buf.get()).await; }
+                s.pin.store(1, Release);
+                s.ref_bit.store(true, Release);
+                return s.buf.get().cast();
+            }
+        }
+    }
+
+    fn unpin(&self, file_id: u32, page_id: u32, is_dirty: bool) {
+        let key = make_key(file_id, page_id);
+        for slot in self.slots.iter() {
+            if slot.key.load(Acquire) == key {
+                let prev = slot.pin.fetch_sub(1, Release);
+                if prev == 1 && is_dirty {
+                    slot.dirty.store(true, Release);
+                }
+                return;
+            }
+        }
+    }
 }
 
 pub struct BufferPool {
-    pub frames: Vec<Option<Arc<RwLock<Frame>>>>,
-    pub page_table: HashMap<(u32, u32), usize>,
-    pub lru_list: VecDeque<usize>,
-    pub free_list: VecDeque<usize>,
-    pub file_accessor: Arc<PageFileIO>,
+    shards: Vec<Arc<Shard>>,
 }
 
 impl BufferPool {
-    pub fn new(capacity: usize, file_accessor: Arc<PageFileIO>) -> Self {
-        BufferPool {
-            frames: vec![None; capacity],
-            page_table: HashMap::with_capacity(capacity),
-            lru_list: VecDeque::with_capacity(capacity),
-            free_list: (0..capacity).collect(),
-            file_accessor,
-        }
+    pub fn new(io: Arc<IoManager>) -> Arc<Self> {
+        let mut shards = Vec::with_capacity(SHARD_COUNT);
+        for _ in 0..SHARD_COUNT { shards.push(Arc::new(Shard::new(io.clone()))); }
+        Arc::new(BufferPool { shards })
     }
 
-    pub async fn get_page(&mut self, file_id: u32, page_id: u32) -> std::io::Result<Arc<RwLock<Frame>>> {
-        let key = (file_id, page_id);
-        if let Some(&frame_index) = self.page_table.get(&key) {
-            return self.use_existing_frame(frame_index).await;
-        }
-
-        let frame_index = match self.free_list.pop_front() {
-            Some(index) => index,
-            None => {
-                if let Some(evict_index) = self.evict_frame().await {
-                    evict_index
-                } else {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "No free frames available and unable to evict any",
-                    ));
-                }
-            }
-        };
-        let page = self.file_accessor.read_page(file_id, page_id).await?;
-        let frame = Frame { page, is_dirty: false, pin_count: 1 };
-        let frame_arc = Arc::new(RwLock::new(frame));
-        self.frames[frame_index] = Some(frame_arc.clone());
-        self.page_table.insert(key, frame_index);
-        self.lru_list.push_back(frame_index);
-        Ok(frame_arc)
+    fn pick_shard(&self, file_id: u32, page_id: u32) -> usize {
+        (file_id as usize ^ page_id as usize) & (SHARD_COUNT - 1)
     }
 
-    async fn use_existing_frame(&mut self, frame_index: usize) -> std::io::Result<Arc<RwLock<Frame>>> {
-        let frame_arc = self.frames[frame_index].as_ref().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "Frame not found")
-        })?;
-        {
-            let mut frame = frame_arc.write().await;
-            frame.pin_count += 1;
-        }
-        self.lru_list.retain(|&i| i != frame_index);
-        self.lru_list.push_back(frame_index);
-        Ok(frame_arc.clone())
+    pub async fn get_page(&self, file_id: u32, page_id: u32) -> *mut u8 {
+        let s = self.pick_shard(file_id, page_id);
+        self.shards[s].get_page(file_id, page_id).await
     }
 
-    async fn evict_frame(&mut self) -> Option<usize> {
-        while let Some(index) = self.lru_list.pop_front() {
-            let frame_opt = self.frames[index].take()?.clone();
-            let cloned_frame = frame_opt.clone();
-            let frame = cloned_frame.read().await;
-            if frame.pin_count > 0 {
-                self.frames[index] = Some(frame_opt);
-                continue;
-            }
-            if frame.is_dirty {
-                self.file_accessor.write_page(frame.page.index, &frame.page).await.ok()?;
-            }
-            self.page_table.remove(&(frame.page.index, frame.page.index));
-            return Some(index);
-        }
-        None
-    }
-
-    pub async fn allocate_new_page(&self, file_id: u32) -> std::io::Result<u32> {
-        let new_page_id = self.file_accessor.num_pages(file_id).await;
-        let new_page = Page::new(new_page_id);
-        self.file_accessor.write_page(file_id, &new_page).await?;
-        Ok(new_page_id)
+    pub fn unpin(&self, file_id: u32, page_id: u32, is_dirty: bool) {
+        let s = self.pick_shard(file_id, page_id);
+        self.shards[s].unpin(file_id, page_id, is_dirty);
     }
 }

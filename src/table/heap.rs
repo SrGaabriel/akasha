@@ -1,131 +1,90 @@
+use crate::page::Page;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::Tuple;
-use futures::FutureExt;
-use std::pin::Pin;
+use tokio::sync::Mutex;
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::sync::RwLock;
-use tokio_stream::Stream;
+use futures::{Stream, task::{Context, Poll}};
+use std::pin::Pin;
 
 pub struct TableHeap {
     pub file_id: u32,
-    pub buffer_pool: Arc<RwLock<BufferPool>>,
-    pub page_ids: Vec<u32>,
+    pub buffer_pool: Arc<BufferPool>,
+    pub page_ids: Mutex<Vec<u32>>,
 }
 
 impl TableHeap {
-    pub async fn insert_tuple(&mut self, tuple: &Tuple) -> Result<(u32, usize), String> {
-        let mut pool = self.buffer_pool.write().await;
-        for &page_id in &self.page_ids {
-            let frame_arc = pool.get_page(self.file_id, page_id).await.map_err(|e| e.to_string())?;
-            let mut frame = frame_arc.write().await;
-            if let Ok(slot_id) = frame.page.insert_tuple(tuple) {
-                frame.is_dirty = true;
-                return Ok((page_id, slot_id));
+    pub fn new(file_id: u32, buffer_pool: Arc<BufferPool>) -> Arc<Self> {
+        Arc::new(TableHeap { file_id, buffer_pool, page_ids: Mutex::new(vec![0]) })
+    }
+
+    pub async fn insert_tuple(&self, tuple: &Tuple) -> Result<(), String> {
+        let mut pages = self.page_ids.lock().await;
+        for pid in pages.iter() {
+            let ptr = self.buffer_pool.get_page(self.file_id, *pid).await;
+            let mut page = unsafe { Page::from_raw(*pid, ptr) };
+            if page.insert_tuple(&tuple).is_ok() {
+                self.buffer_pool.unpin(self.file_id, *pid, true);
+                return Ok(());
             }
+            self.buffer_pool.unpin(self.file_id, *pid, false);
         }
-        let new_page_id = pool.allocate_new_page(self.file_id).await.map_err(|e| e.to_string())?;
-        self.page_ids.push(new_page_id);
-        let frame_arc = pool.get_page(self.file_id, new_page_id).await.map_err(|e| e.to_string())?;
-        let mut frame = frame_arc.write().await;
-        let slot_id = frame.page.insert_tuple(tuple)?;
-        frame.is_dirty = true;
-        Ok((new_page_id, slot_id))
+        let new_pid = pages.len() as u32;
+        let ptr = self.buffer_pool.get_page(self.file_id, new_pid).await;
+        let mut page = unsafe { Page::from_raw(new_pid, ptr) };
+        page.init_new();
+        page.insert_tuple(&tuple)?;
+        pages.push(new_pid);
+        self.buffer_pool.unpin(self.file_id, new_pid, true);
+        Ok(())
     }
 
     pub async fn get_tuple(&self, page_id: u32, slot_id: usize) -> Option<Tuple> {
-        let mut pool = self.buffer_pool.write().await;
-        let frame_arc = pool.get_page(self.file_id, page_id).await.ok()?;
-        let frame = frame_arc.read().await;
-        frame.page.get_tuple(slot_id)
+        let ptr = self.buffer_pool.get_page(self.file_id, page_id).await;
+        let page = unsafe { Page::from_raw(page_id, ptr) };
+        let t = page.get_tuple(slot_id);
+        self.buffer_pool.unpin(self.file_id, page_id, false);
+        t
     }
 }
 
-pub struct TableHeapIterator {
-    table_heap: Arc<RwLock<TableHeap>>,
-    buffer_pool: Arc<RwLock<BufferPool>>,
-    current_page_index: usize,
-    current_slot_index: usize,
-    current_future: Option<Pin<Box<dyn Future<Output = Option<(Tuple, usize, usize)>> + Send>>>,
+pub struct TableIterator {
+    heap: Arc<TableHeap>,
+    page_idx: usize,
+    slot_idx: usize,
 }
 
-impl TableHeapIterator {
-    pub async fn create(table_heap: Arc<RwLock<TableHeap>>) -> Self {
-        let buffer_pool = {
-            let table_heap_lock = table_heap.read().await;
-            table_heap_lock.buffer_pool.clone()
-        };
-        Self {
-            buffer_pool,
-            table_heap,
-            current_page_index: 0,
-            current_slot_index: 0,
-            current_future: None,
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.current_page_index = 0;
-        self.current_slot_index = 0;
-        self.current_future = None;
+impl TableIterator {
+    pub fn new(heap: Arc<TableHeap>) -> Self {
+        TableIterator { heap, page_idx: 0, slot_idx: 0 }
     }
 }
 
-async fn next_tuple_helper(
-    table_heap: Arc<RwLock<TableHeap>>,
-    buffer_pool: Arc<RwLock<BufferPool>>,
-    mut page_index: usize,
-    mut slot_index: usize,
-) -> Option<(Tuple, usize, usize)> {
-    let table_heap = table_heap.read().await;
-    while page_index < table_heap.page_ids.len() {
-        let page_id = table_heap.page_ids[page_index];
-        let mut pool = buffer_pool.write().await;
-        let frame_arc = pool.get_page(table_heap.file_id, page_id).await.ok()?;
-        let frame = frame_arc.read().await;
-        while slot_index < frame.page.slot_count {
-            let tuple_opt = frame.page.get_tuple(slot_index);
-            if let Some(tuple) = tuple_opt {
-                return Some((tuple, page_index, slot_index + 1));
-            }
-            slot_index += 1;
-        }
-        page_index += 1;
-        slot_index = 0;
-    }
-    None
-}
-
-impl Stream for TableHeapIterator {
+impl Stream for TableIterator {
     type Item = Tuple;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.current_future.is_none() {
-            let table_heap = self.table_heap.clone();
-            let buffer_pool = self.buffer_pool.clone();
-            let page_index = self.current_page_index;
-            let slot_index = self.current_slot_index;
-            let fut = next_tuple_helper(table_heap, buffer_pool, page_index, slot_index);
-            self.current_future = Some(Box::pin(fut));
-        }
-
-        let fut = self.current_future.as_mut().unwrap();
-        match fut.poll_unpin(cx) {
-            Poll::Ready(res) => {
-                self.current_future = None;
-                if let Some((tuple, page_index, slot_index)) = res {
-                    self.current_page_index = page_index;
-                    self.current_slot_index = slot_index;
-                    Poll::Ready(Some(tuple))
-                } else {
-                    Poll::Ready(None)
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let heap = this.heap.clone();
+        let mut fut = Box::pin(async move {
+            let pages = heap.page_ids.lock().await;
+            while this.page_idx < pages.len() {
+                let pid = pages[this.page_idx];
+                let ptr = heap.buffer_pool.get_page(heap.file_id, pid).await;
+                let page = unsafe { Page::from_raw(pid, ptr) };
+                if let Some(t) = page.get_tuple(this.slot_idx) {
+                    this.slot_idx += 1;
+                    heap.buffer_pool.unpin(heap.file_id, pid, false);
+                    return Some(t);
                 }
+                this.slot_idx = 0;
+                this.page_idx += 1;
             }
-            Poll::Pending => Poll::Pending,
-        }
+            None
+        });
+        fut.as_mut().poll(cx)
     }
 }
 
-pub async fn scan_table(table_ref: Arc<RwLock<TableHeap>>) -> TableHeapIterator {
-    TableHeapIterator::create(table_ref).await
+pub async fn scan_table(table_ref: Arc<TableHeap>) -> TableIterator {
+    TableIterator::new(table_ref)
 }

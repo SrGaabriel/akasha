@@ -1,5 +1,3 @@
-// This will probably have some redundant structs at the start, but we'll gradually be replacing old architecture with this one
-
 pub mod transformer;
 pub mod err;
 pub mod optimizer;

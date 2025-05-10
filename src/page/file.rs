@@ -20,18 +20,28 @@ impl PageFile {
         Ok(PageFile { id, file })
     }
 
-    pub async fn read_page(&mut self, page_index: u32) -> std::io::Result<Page> {
-        let mut buffer = [0u8; PAGE_SIZE];
+    pub async fn read_page_into_buffer<'a>(
+        &mut self,
+        page_index: u32,
+        buffer: &'a mut [u8; PAGE_SIZE],
+    ) -> std::io::Result<Page<'a>> {
         let offset = (page_index as usize) * PAGE_SIZE;
         self.file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
-        self.file.read_exact(&mut buffer).await?;
+        self.file.read_exact(buffer).await?;
         Ok(Page::from_bytes(page_index, buffer))
     }
 
-    pub async fn write_page(&mut self, page: &Page) -> std::io::Result<()> {
+    pub async fn write_page(&mut self, page: &Page<'_>) -> std::io::Result<()> {
         let offset = (page.index as usize) * PAGE_SIZE;
         self.file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
         self.file.write_all(&page.to_bytes()).await?;
+        Ok(())
+    }
+
+    pub async fn write_page_data(&mut self, page_id: u32, data: Vec<u8>) -> std::io::Result<()> {
+        let offset = (page_id as usize) * PAGE_SIZE;
+        self.file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
+        self.file.write_all(&data).await?;
         Ok(())
     }
 
