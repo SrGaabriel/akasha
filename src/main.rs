@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
-use crate::page::io::{IoManager, PageFileIO};
+use crate::page::io::{IoManager, FileSystemManager};
 use crate::page::tuple::Tuple;
 
 pub mod page;
@@ -76,18 +76,19 @@ impl QueryEngine {
         let init_timer = DebugTimer::new("Database initialization", debug_mode);
 
         let home_dir = "db".to_string();
-        let file_io = Arc::new(PageFileIO::new(home_dir.clone()));
+        let file_io = Arc::new(FileSystemManager::new(home_dir.clone()));
         file_io.create_home().await?;
 
         let io = Arc::new(IoManager::new(file_io.clone()));
-        let buffer_pool = BufferPool::new(io);
+        let buffer_pool = BufferPool::new(io.clone());
 
-        let catalog = match TableCatalog::load("db", Arc::clone(&buffer_pool)).await {
+        let catalog = match TableCatalog::load("db", Arc::clone(&buffer_pool), io).await {
             Ok(cat) => {
                 println!("Loaded catalog with {} tables", cat.tables.len());
                 cat
             },
-            Err(_) => {
+            Err(err) => {
+                eprintln!("Error loading catalog: {}", err);
                 let mut cat = TableCatalog::new(buffer_pool.clone());
                 let mut columns = HashMap::new();
                 columns.insert("name".to_string(), ColumnInfo {
@@ -104,7 +105,6 @@ impl QueryEngine {
                     "users".to_string(),
                     TableInfo { columns }
                 ).await?;
-
                 cat.persist(&*home_dir).await?;
                 cat
             }
@@ -170,10 +170,8 @@ impl QueryEngine {
         let execution_elapsed = execute_timer.elapsed();
         let total_elapsed = total_timer.elapsed();
 
-        println!("Result: {:?}", tuples.len());
-
-        println!("Query executed in {} and completed in {}", execution_elapsed, total_elapsed);
         println!("Executed: {:?}", compiled);
+        println!("{:?} Query executed in {} and completed in {}", tuples.len(), execution_elapsed, total_elapsed);
 
         Ok(())
     }

@@ -1,7 +1,8 @@
+use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::{DataType, Value};
 use crate::page::Page;
-use crate::table::heap::{TableHeap, TableIterator};
+use crate::table::heap::TableHeap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -53,7 +54,7 @@ impl TableCatalog {
         let ptr = self.buffer_pool.get_page(file_id, 0).await;
         let mut page = unsafe { Page::from_raw(0, ptr) };
         page.init_new();
-        self.buffer_pool.unpin(file_id, 0, true);
+        self.buffer_pool.unpin_and_flush(file_id, 0, true).await;
         self.tables.insert(name.clone(), PhysicalTable { file_id, name, heap, info });
         Ok(())
     }
@@ -62,25 +63,28 @@ impl TableCatalog {
         self.tables.get(name)
     }
 
-    pub async fn scan(&self, name: &str) -> Option<TableIterator> {
-        self.get_table(name).map(|t| TableIterator::new(t.heap.clone()))
-    }
-
     pub async fn persist(&self, base: &str) -> std::io::Result<()> {
-        let meta: Vec<_> = self.tables.values().map(|t| (t.name.clone(), t.file_id)).collect();
+        let meta: Vec<_> = self.tables.values().map(|t| TableMetadata {
+            name: t.name.clone(),
+            file_id: t.file_id,
+            info: t.info.clone(),
+        }).collect();
         let s = serde_json::to_string_pretty(&meta)?;
         let mut f = tokio::fs::File::create(format!("{}/catalog.json", base)).await?;
         f.write_all(s.as_bytes()).await?;
         f.flush().await
     }
 
-    pub async fn load(base: &str, pool: Arc<BufferPool>) -> std::io::Result<Self> {
+    pub async fn load(base: &str, pool: Arc<BufferPool>, io: Arc<IoManager>) -> std::io::Result<Self> {
+        println!("Loading catalog from {}", base);
         let s = tokio::fs::read_to_string(format!("{}/catalog.json", base)).await?;
         let entries: Vec<TableMetadata> = serde_json::from_str(&s)?;
         let mut cat = TableCatalog::new(pool.clone());
         for entry in entries {
             let file_id = entry.file_id;
-            let heap = TableHeap::new(file_id, pool.clone());
+            let heap = TableHeap::from_existing(file_id, pool.clone(), io.clone())
+                .await
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             let table = PhysicalTable { file_id, name: entry.name.clone(), heap, info: entry.info };
             cat.tables.insert(entry.name, table);
         }

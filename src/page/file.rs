@@ -1,3 +1,4 @@
+use std::io::SeekFrom;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use crate::page::{Page, PAGE_SIZE};
@@ -6,7 +7,7 @@ pub const EXTENSION: &str = "record";
 
 pub struct PageFile {
     id: u32,
-    pub(crate) file: File
+    pub(crate) file: File,
 }
 
 impl PageFile {
@@ -25,27 +26,35 @@ impl PageFile {
         page_index: u32,
         buffer: &'a mut [u8; PAGE_SIZE],
     ) -> std::io::Result<Page<'a>> {
-        let offset = (page_index as usize) * PAGE_SIZE;
-        self.file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
+        let offset = (page_index as u64) * (PAGE_SIZE as u64);
+        self.file.seek(SeekFrom::Start(offset)).await?;
         self.file.read_exact(buffer).await?;
         Ok(Page::from_bytes(page_index, buffer))
     }
 
     pub async fn write_page(&mut self, page: &Page<'_>) -> std::io::Result<()> {
-        let offset = (page.index as usize) * PAGE_SIZE;
-        self.file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
+        let offset = (page.index as u64) * (PAGE_SIZE as u64);
+        self.file.seek(SeekFrom::Start(offset)).await?;
         self.file.write_all(&page.to_bytes()).await?;
+        self.file.sync_data().await?;
         Ok(())
     }
 
-    pub async fn write_page_data(&mut self, page_id: u32, data: Vec<u8>) -> std::io::Result<()> {
-        let offset = (page_id as usize) * PAGE_SIZE;
-        self.file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
+    pub async fn write_page_data(
+        &mut self,
+        page_id: u32,
+        data: Vec<u8>
+    ) -> std::io::Result<()> {
+        assert_eq!(data.len(), PAGE_SIZE, "data must be exactly one page");
+        let offset = (page_id as u64) * (PAGE_SIZE as u64);
+        self.file.seek(SeekFrom::Start(offset)).await?;
         self.file.write_all(&data).await?;
+        self.file.sync_data().await?;
         Ok(())
     }
 
-    pub async fn metadata(&self) -> std::io::Result<std::fs::Metadata> {
-        self.file.metadata().await
+    pub async fn get_page_count(&self) -> std::io::Result<u32> {
+        let size = self.file.metadata().await?.len();
+        Ok((size / PAGE_SIZE as u64) as u32)
     }
 }

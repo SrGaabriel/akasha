@@ -7,10 +7,6 @@ use crate::page::io::IoManager;
 const SHARD_COUNT: usize = 4;
 const SLOTS_PER_SHARD: usize = 1024;
 
-fn make_key(file_id: u32, page_id: u32) -> u64 {
-    ((file_id as u64) << 32) | page_id as u64
-}
-
 struct Slot {
     key: AtomicU64,
     ref_bit: AtomicBool,
@@ -25,7 +21,7 @@ unsafe impl Sync for Slot {}
 impl Slot {
     fn new() -> Self {
         Slot {
-            key: AtomicU64::new(0),
+            key: AtomicU64::new(u64::MAX),
             ref_bit: AtomicBool::new(false),
             pin: AtomicUsize::new(0),
             dirty: AtomicBool::new(false),
@@ -105,6 +101,44 @@ impl Shard {
             }
         }
     }
+
+    pub async fn flush_page(&self, file_id: u32, page_id: u32) {
+        let key = make_key(file_id, page_id);
+        for slot in self.slots.iter() {
+            if slot.key.load(Acquire) == key {
+                if slot.dirty.swap(false, AcqRel) {
+                    let bytes = unsafe {
+                        let ptr = slot.buf.get();
+                        (*ptr)[..].to_vec()
+                    };
+                    self.io.schedule_write(file_id, page_id, bytes);
+                }
+                return;
+            }
+        }
+    }
+
+    pub async fn flush_all_dirty_pages_in_shard(&self) {
+        for slot_idx in 0..self.slots.len() {
+            let s = &self.slots[slot_idx];
+            if s.dirty.load(Acquire) {
+                let key = s.key.load(Acquire);
+                if key == 0 {
+                    continue;
+                }
+                let fid = (key >> 32) as u32;
+                let pid = key as u32;
+
+                if s.dirty.swap(false, AcqRel) {
+                    let bytes = unsafe {
+                        let ptr = s.buf.get();
+                        (*ptr)[..].to_vec()
+                    };
+                    self.io.schedule_write(fid, pid, bytes);
+                }
+            }
+        }
+    }
 }
 
 pub struct BufferPool {
@@ -131,4 +165,36 @@ impl BufferPool {
         let s = self.pick_shard(file_id, page_id);
         self.shards[s].unpin(file_id, page_id, is_dirty);
     }
+
+    pub async fn unpin_and_flush(&self, file_id: u32, page_id: u32, is_dirty: bool) {
+        let s = self.pick_shard(file_id, page_id);
+        let shard = &self.shards[s];
+        shard.unpin(file_id, page_id, is_dirty);
+        shard.flush_page(file_id, page_id).await;
+    }
+
+    pub async fn flush(&self) -> std::io::Result<()> {
+        for shard in &self.shards {
+            for slot in shard.slots.iter() {
+                if slot.dirty.load(Acquire) {
+                    let key = slot.key.load(Acquire);
+                    let file_id = (key >> 32) as u32;
+                    let page_id = key as u32;
+                    let bytes = unsafe {
+                        let ptr = slot.buf.get();
+                        (&*ptr)[..].to_vec()
+                    };
+                    self.shards[self.pick_shard(file_id, page_id)]
+                        .io
+                        .schedule_write(file_id, page_id, bytes);
+                    slot.dirty.store(false, Release);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn make_key(file_id: u32, page_id: u32) -> u64 {
+    ((file_id as u64) << 32) | page_id as u64
 }

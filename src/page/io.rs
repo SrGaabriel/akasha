@@ -1,16 +1,16 @@
+use crate::page::file::{PageFile, EXTENSION};
+use crate::page::PAGE_SIZE;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use crate::page::file::{PageFile, EXTENSION};
-use crate::page::{Page, PAGE_SIZE};
 
-pub struct PageFileIO {
+pub struct FileSystemManager {
     home_dir: String,
 }
 
-impl PageFileIO {
+impl FileSystemManager {
     pub fn new(home_dir: String) -> Self {
-        PageFileIO { home_dir }
+        FileSystemManager { home_dir }
     }
 
     pub async fn create_home(&self) -> std::io::Result<()> {
@@ -20,22 +20,6 @@ impl PageFileIO {
     pub async fn open_page_file(&self, file_id: u32) -> std::io::Result<PageFile> {
         let path = format!("{}/pg_{}ak.{}", self.home_dir, file_id, EXTENSION);
         PageFile::open(file_id, &path).await
-    }
-
-    pub async fn read_page<'a>(&self, file_id: u32, page_index: u32, buffer: &'a mut [u8; PAGE_SIZE]) -> std::io::Result<Page<'a>> {
-        let mut page_file = self.open_page_file(file_id).await?;
-        page_file.read_page_into_buffer(page_index, buffer).await
-    }
-
-    pub async fn write_page(&self, file_id: u32, page: &Page<'_>) -> std::io::Result<()> {
-        let mut page_file = self.open_page_file(file_id).await?;
-        page_file.write_page(page).await
-    }
-
-    pub async fn num_pages(&self, file_id: u32) -> u32 {
-        let file = self.open_page_file(file_id).await.unwrap();
-        let metadata = file.metadata().await.unwrap();
-        (metadata.len() / PAGE_SIZE as u64) as u32
     }
 }
 
@@ -47,13 +31,13 @@ struct WriteJob {
 
 #[derive(Clone)]
 pub struct IoManager {
-    inner: Arc<PageFileIO>,
+    inner: Arc<FileSystemManager>,
     open_files: Arc<Mutex<HashMap<u32, PageFile>>>,
     tx: mpsc::UnboundedSender<WriteJob>,
 }
 
 impl IoManager {
-    pub fn new(inner: Arc<PageFileIO>) -> Self {
+    pub fn new(inner: Arc<FileSystemManager>) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<WriteJob>();
         let inner_clone = inner.clone();
 
@@ -89,6 +73,12 @@ impl IoManager {
         };
         pf.read_page_into_buffer(page_id, buf).await?;
         Ok(())
+    }
+
+    pub async fn get_page_count(&self, file_id: u32) -> std::io::Result<u32> {
+        let mut map = self.open_files.lock().await;
+        let pf = map.entry(file_id).or_insert(self.inner.open_page_file(file_id).await?);
+        pf.get_page_count().await
     }
 
     pub fn schedule_write(&self, file_id: u32, page_id: u32, data: Vec<u8>) {
