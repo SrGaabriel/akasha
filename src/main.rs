@@ -17,8 +17,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
-use tokio::sync::RwLock;
-use crate::page::io::PageFileIO;
+use crate::page::io::{IoManager, FileSystemManager};
+use crate::page::tuple::Tuple;
 
 pub mod page;
 pub mod query;
@@ -62,8 +62,6 @@ impl Drop for DebugTimer {
 }
 
 struct QueryEngine {
-    buffer_pool: Arc<RwLock<BufferPool>>,
-    catalog: Arc<RwLock<TableCatalog>>,
     compiler: PlanCompiler,
     arena: Arena,
     executor: QueryExecutor,
@@ -75,18 +73,20 @@ impl QueryEngine {
         let init_timer = DebugTimer::new("Database initialization", debug_mode);
 
         let home_dir = "db".to_string();
-        let file_io = Arc::new(PageFileIO::new(home_dir.clone()));
+        let file_io = Arc::new(FileSystemManager::new(home_dir.clone()));
         file_io.create_home().await?;
 
-        let buffer_pool = Arc::new(RwLock::new(BufferPool::new(16, file_io)));
+        let io = Arc::new(IoManager::new(file_io.clone()));
+        let buffer_pool = BufferPool::new(io.clone());
 
-        let catalog = match TableCatalog::load("db", Arc::clone(&buffer_pool)).await {
+        let catalog = match TableCatalog::load("db", Arc::clone(&buffer_pool), io).await {
             Ok(cat) => {
                 println!("Loaded catalog with {} tables", cat.tables.len());
                 cat
             },
-            Err(_) => {
-                let mut cat = TableCatalog::new();
+            Err(err) => {
+                eprintln!("Error loading catalog: {}", err);
+                let mut cat = TableCatalog::new(buffer_pool.clone());
                 let mut columns = HashMap::new();
                 columns.insert("name".to_string(), ColumnInfo {
                     data_type: page::tuple::DataType::Int,
@@ -100,25 +100,20 @@ impl QueryEngine {
                 });
                 cat.create_table(
                     "users".to_string(),
-                    TableInfo { columns },
-                    buffer_pool.clone()
+                    TableInfo { columns }
                 ).await?;
-
-                cat.persist(home_dir).await?;
+                cat.persist(&*home_dir).await?;
                 cat
             }
         };
-
-        let catalog = Arc::new(RwLock::new(catalog));
         drop(init_timer);
+        let catalog = Arc::new(catalog);
 
         Ok(Self {
-            buffer_pool,
-            catalog: catalog.clone(),
-            compiler: PlanCompiler::new(),
+            compiler: PlanCompiler::new(catalog.clone()),
             arena: Arena::with_capacity(10000, 1000),
             executor: QueryExecutor::new(catalog),
-            debug_mode,
+            debug_mode
         })
     }
 
@@ -158,23 +153,19 @@ impl QueryEngine {
         drop(transform_timer);
 
         let compile_timer = DebugTimer::new("Query compilation", self.debug_mode);
-        let catalog_lock = Arc::new(self.catalog.read().await);
-        let compiled = self.compiler.compile(&transformed, catalog_lock).unwrap();
+        let compiled = self.compiler.compile(&transformed).unwrap();
+        drop(transformed);
         drop(compile_timer);
 
         let execute_timer = DebugTimer::new("Query execution", self.debug_mode);
-        let mut plan = self.executor.execute(compiled).await?;
+        let plan = self.executor.execute(&compiled).await?;
+        let tuples = plan.collect::<Vec<Tuple>>().await;
 
-        let mut count = 0;
-        while let Some(tuple) = plan.next().await {
-            println!("{:?}", tuple);
-            count += 1;
-        }
+        let execution_elapsed = execute_timer.elapsed();
+        let total_elapsed = total_timer.elapsed();
 
-        if self.debug_mode {
-            println!("Returned {} rows", count);
-        }
-        println!("Query executed in {} and completed in {}", execute_timer.elapsed(), total_timer.elapsed());
+        println!("Executed: {:?}", compiled);
+        println!("{:?} Query executed in {} and completed in {}", tuples.len(), execution_elapsed, total_elapsed);
 
         Ok(())
     }

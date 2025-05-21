@@ -7,14 +7,11 @@ use futures::Stream;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
 
-// todo: have actual errors
-
 pub struct QueryExecutor {
-    catalog: Arc<RwLock<TableCatalog>>
+    catalog: Arc<TableCatalog>
 }
 
 pub enum PlanResult {
@@ -26,7 +23,7 @@ pub enum PlanResult {
 }
 
 impl QueryExecutor {
-    pub fn new(catalog: Arc<RwLock<TableCatalog>>) -> Self {
+    pub fn new(catalog: Arc<TableCatalog>) -> Self {
         Self {
             catalog
         }
@@ -34,16 +31,13 @@ impl QueryExecutor {
 
     pub async fn execute(
         &self,
-        transaction: Transaction,
+        transaction: &Transaction,
     ) -> Result<Pin<Box<dyn Stream<Item = Tuple> + Send>>, String> {
         match transaction {
             Transaction::Select { table, ops } => {
                 let physical_table = self
                     .catalog
-                    .read()
-                    .await
                     .get_table(&table)
-                    .await
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
                 let heap = physical_table.heap.clone();
                 let base_stream = scan_table(heap).await;
@@ -52,20 +46,16 @@ impl QueryExecutor {
             Transaction::Insert { table, values, ops, returning } => {
                 let physical_table = self
                     .catalog
-                    .read()
-                    .await
                     .get_table(&table)
-                    .await
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
-                let tuple = Self::build_tuple(&physical_table.info, values)?;
+                let tuple = Self::build_tuple(&physical_table.info, values.clone())?;
                 let heap = physical_table.heap.clone();
-                heap.write()
-                    .await
+                heap
                     .insert_tuple(&tuple)
                     .await
                     .map_err(|e| format!("Insert failed: {}", e))?;
 
-                if returning {
+                if *returning {
                     Ok(Box::pin(futures::stream::iter(vec![])))
                 } else {
                     let base_stream = Box::pin(futures::stream::iter(vec![tuple]));
@@ -106,7 +96,7 @@ impl QueryExecutor {
 
     fn apply_ops<S>(
         stream: S,
-        ops: Vec<TableOp>,
+        ops: &Vec<TableOp>,
     ) -> Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>
     where
         S: Stream<Item = Tuple> + Send + 'static,

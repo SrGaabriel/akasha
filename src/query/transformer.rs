@@ -6,6 +6,7 @@ use crate::query::optimizer::QueryOptimizer;
 use crate::query::{PredicateExpr, QueryExpr, TransactionOp, TransactionType};
 use crate::query::{BinaryOperator, ComparisonOperator};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 struct BuiltInTransactionFunction {
     name: String,
@@ -85,7 +86,7 @@ impl<'a> AstToQueryTransformer<'a> {
                             match input {
                                 QueryExpr::Transaction { operations, .. } => {
                                     operations.push(TransactionOp::Filter {
-                                        predicate: Box::new(predicate),
+                                        predicate: Rc::new(predicate),
                                     });
                                 }
                                 _ => return Err(TransformError::InvalidArgument("filter".to_string())),
@@ -112,8 +113,8 @@ impl<'a> AstToQueryTransformer<'a> {
 
                         Ok(QueryExpr::Transaction {
                             typ: TransactionType::Insert {
-                                table: table_name.clone(),
-                                value: Box::new(value)
+                                table_name: table_name.clone(),
+                                value: Rc::new(value)
                             },
                             operations: vec![]
                         })
@@ -158,8 +159,8 @@ impl<'a> AstToQueryTransformer<'a> {
                 if let QueryExpr::Reference(op_name) = &func_expr {
                     if op_name == "|>" && arg_exprs.len() == 2 {
                         return Ok(QueryExpr::Bind {
-                            input: Box::new(arg_exprs[0].clone()),
-                            func: Box::new(arg_exprs[1].clone()),
+                            input: Rc::new(arg_exprs[0].clone()),
+                            func: Rc::new(arg_exprs[1].clone()),
                         });
                     }
                 }
@@ -181,7 +182,7 @@ impl<'a> AstToQueryTransformer<'a> {
                         }
                     }
                     _ => Ok(QueryExpr::Apply {
-                        func: Box::new(func_expr),
+                        func: Rc::new(func_expr),
                         args: arg_exprs,
                     }),
                 }
@@ -195,8 +196,8 @@ impl<'a> AstToQueryTransformer<'a> {
                 self.pop_scope();
                 Ok(QueryExpr::Binding {
                     name: name_str,
-                    value: Box::new(value_expr),
-                    body: Box::new(body_expr),
+                    value: Rc::new(value_expr),
+                    body: Rc::new(body_expr),
                 })
             }
             Expr::BinaryOp { op, left, right } => {
@@ -213,9 +214,9 @@ impl<'a> AstToQueryTransformer<'a> {
                 };
 
                 Ok(QueryExpr::BinaryOp {
-                    left: Box::new(left_expr),
+                    left: Rc::new(left_expr),
                     op: operator,
-                    right: Box::new(right_expr),
+                    right: Rc::new(right_expr),
                 })
             }
             Expr::Number(num_str) => {
@@ -309,12 +310,12 @@ impl<'a> AstToQueryTransformer<'a> {
                     TokenKind::And => {
                         let left_pred = self.transform_to_predicate(*left)?;
                         let right_pred = self.transform_to_predicate(*right)?;
-                        return Ok(PredicateExpr::And(Box::new(left_pred), Box::new(right_pred)));
+                        return Ok(PredicateExpr::And(Rc::new(left_pred), Rc::new(right_pred)));
                     }
                     TokenKind::Or => {
                         let left_pred = self.transform_to_predicate(*left)?;
                         let right_pred = self.transform_to_predicate(*right)?;
-                        return Ok(PredicateExpr::Or(Box::new(left_pred), Box::new(right_pred)));
+                        return Ok(PredicateExpr::Or(Rc::new(left_pred), Rc::new(right_pred)));
                     }
                     _ => return Err(TransformError::UnsupportedOperator(op.clone())),
                 };
@@ -328,7 +329,7 @@ impl<'a> AstToQueryTransformer<'a> {
             Expr::UnaryOp { op, operand } => {
                 if *op == TokenKind::Not {
                     let pred = self.transform_to_predicate(*operand)?;
-                    Ok(PredicateExpr::Not(Box::new(pred)))
+                    Ok(PredicateExpr::Not(Rc::new(pred)))
                 } else {
                     Err(TransformError::UnsupportedOperator(op.clone()))
                 }

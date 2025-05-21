@@ -34,10 +34,6 @@ impl<'src> Parser<'src> {
         self.tokens.get(self.pos).copied().ok_or(ParseError::UnexpectedEndOfInput)
     }
 
-    fn peek_ahead(&self, n: usize) -> Result<Token<'src>, ParseError<'src>> {
-        self.tokens.get(self.pos + n).copied().ok_or(ParseError::UnexpectedEndOfInput)
-    }
-
     fn consume(&mut self) -> Result<Token<'src>, ParseError<'src>> {
         let token = self.peek()?;
         self.pos += 1;
@@ -100,11 +96,6 @@ impl<'src> Parser<'src> {
                 None => return Err(ParseError::UnexpectedEndOfInput),
             }
         }
-    }
-
-    fn consume_relevant(&mut self) -> Result<Token<'src>, ParseError<'src>> {
-        self.skip_newlines();
-        self.consume()
     }
 
     fn save_position(&self) -> Result<usize, ParseError<'src>> {
@@ -176,7 +167,7 @@ impl<'src> Parser<'src> {
 
             match self.field_access() {
                 Ok(item) => items.push(item),
-                Err(err) => {
+                Err(_) => {
                     self.restore_position(current_pos);
                     break;
                 }
@@ -292,7 +283,6 @@ impl<'src> Parser<'src> {
         Ok(self.arena.create_array(&items))
     }
 
-    // it goes like this: { name = "value", arg2 = 5 }, etc..
     fn instance_expr(&mut self) -> Result<NodeId, ParseError<'src>> {
         self.expect(TokenKind::LeftBraces)?;
         let mut items = Vec::new();
