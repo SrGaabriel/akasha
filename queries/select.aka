@@ -1,1 +1,1 @@
-scan users
+scan users |> filter (\u -> u.age > 34)

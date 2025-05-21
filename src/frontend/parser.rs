@@ -34,10 +34,6 @@ impl<'src> Parser<'src> {
         self.tokens.get(self.pos).copied().ok_or(ParseError::UnexpectedEndOfInput)
     }
 
-    fn peek_ahead(&self, n: usize) -> Result<Token<'src>, ParseError<'src>> {
-        self.tokens.get(self.pos + n).copied().ok_or(ParseError::UnexpectedEndOfInput)
-    }
-
     fn consume(&mut self) -> Result<Token<'src>, ParseError<'src>> {
         let token = self.peek()?;
         self.pos += 1;
@@ -100,11 +96,6 @@ impl<'src> Parser<'src> {
                 None => return Err(ParseError::UnexpectedEndOfInput),
             }
         }
-    }
-
-    fn consume_relevant(&mut self) -> Result<Token<'src>, ParseError<'src>> {
-        self.skip_newlines();
-        self.consume()
     }
 
     fn save_position(&self) -> Result<usize, ParseError<'src>> {
@@ -176,7 +167,7 @@ impl<'src> Parser<'src> {
 
             match self.field_access() {
                 Ok(item) => items.push(item),
-                Err(err) => {
+                Err(_) => {
                     self.restore_position(current_pos);
                     break;
                 }

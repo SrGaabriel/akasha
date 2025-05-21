@@ -7,14 +7,11 @@ use futures::Stream;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
 
-// todo: have actual errors
-
 pub struct QueryExecutor {
-    catalog: Arc<RwLock<TableCatalog>>
+    catalog: Arc<TableCatalog>
 }
 
 pub enum PlanResult {
@@ -26,7 +23,7 @@ pub enum PlanResult {
 }
 
 impl QueryExecutor {
-    pub fn new(catalog: Arc<RwLock<TableCatalog>>) -> Self {
+    pub fn new(catalog: Arc<TableCatalog>) -> Self {
         Self {
             catalog
         }
@@ -38,11 +35,8 @@ impl QueryExecutor {
     ) -> Result<Pin<Box<dyn Stream<Item = Tuple> + Send>>, String> {
         match transaction {
             Transaction::Select { table, ops } => {
-                let catalog = self
+                let physical_table = self
                     .catalog
-                    .read()
-                    .await;
-                let physical_table = catalog
                     .get_table(&table)
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
                 let heap = physical_table.heap.clone();
@@ -50,11 +44,8 @@ impl QueryExecutor {
                 Ok(Self::apply_ops(base_stream, ops))
             }
             Transaction::Insert { table, values, ops, returning } => {
-                let catalog = self
+                let physical_table = self
                     .catalog
-                    .read()
-                    .await;
-                let physical_table = catalog
                     .get_table(&table)
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
                 let tuple = Self::build_tuple(&physical_table.info, values.clone())?;

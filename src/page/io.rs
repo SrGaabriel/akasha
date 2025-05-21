@@ -1,4 +1,4 @@
-use crate::page::file::{PageFile, EXTENSION};
+use crate::page::file::{RelationFile, EXTENSION};
 use crate::page::PAGE_SIZE;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,9 +17,9 @@ impl FileSystemManager {
         tokio::fs::create_dir_all(&self.home_dir).await
     }
 
-    pub async fn open_page_file(&self, file_id: u32) -> std::io::Result<PageFile> {
-        let path = format!("{}/pg_{}ak.{}", self.home_dir, file_id, EXTENSION);
-        PageFile::open(file_id, &path).await
+    pub async fn open_page_file(&self, file_id: u32) -> std::io::Result<RelationFile> {
+        let path = format!("{}/ak{}.{}", self.home_dir, file_id, EXTENSION);
+        RelationFile::open(file_id, &path).await
     }
 }
 
@@ -29,10 +29,9 @@ struct WriteJob {
     data: Vec<u8>,
 }
 
-#[derive(Clone)]
 pub struct IoManager {
     inner: Arc<FileSystemManager>,
-    open_files: Arc<Mutex<HashMap<u32, PageFile>>>,
+    open_files: Mutex<HashMap<u32, RelationFile>>,
     tx: mpsc::UnboundedSender<WriteJob>,
 }
 
@@ -51,7 +50,7 @@ impl IoManager {
 
         IoManager {
             inner,
-            open_files: Arc::new(Mutex::new(HashMap::new())),
+            open_files: Mutex::new(HashMap::new()),
             tx,
         }
     }
@@ -60,7 +59,7 @@ impl IoManager {
         &self,
         file_id: u32,
         page_id: u32,
-        buf: &mut [u8; PAGE_SIZE],
+        buf: &mut [u8; PAGE_SIZE]
     ) -> std::io::Result<()> {
         let mut map = self.open_files.lock().await;
         let pf = match map.get_mut(&file_id) {

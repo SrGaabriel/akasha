@@ -5,12 +5,13 @@ use crate::page::{Page, PAGE_SIZE};
 
 pub const EXTENSION: &str = "record";
 
-pub struct PageFile {
+pub struct RelationFile {
+    #[allow(dead_code)]
     id: u32,
     pub(crate) file: File,
 }
 
-impl PageFile {
+impl RelationFile {
     pub async fn open(id: u32, path: &str) -> std::io::Result<Self> {
         let file = OpenOptions::new()
             .read(true)
@@ -18,7 +19,7 @@ impl PageFile {
             .create(true)
             .open(path)
             .await?;
-        Ok(PageFile { id, file })
+        Ok(RelationFile { id, file })
     }
 
     pub async fn read_page_into_buffer<'a>(

@@ -316,7 +316,7 @@ impl Evaluator {
                 let rhs = self.evaluate(arena, *right);
                 self.eval_binary_op(*op, lhs, rhs)
             }
-            _ => Value::Null, // Placeholder
+            _ => Value::Null,
         }
     }
 

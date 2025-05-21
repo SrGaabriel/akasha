@@ -50,13 +50,17 @@ impl Value {
                 buf.push(self.id());
                 buf.extend_from_slice(&i.to_le_bytes());
             }
+            Value::Long(l) => {
+                buf.push(self.id());
+                buf.extend_from_slice(&l.to_le_bytes());
+            }
             Value::Float(f) => {
                 buf.push(self.id());
                 buf.extend_from_slice(&f.to_le_bytes());
             }
-            Value::Boolean(b) => {
+            Value::Double(d) => {
                 buf.push(self.id());
-                buf.push(*b as u8);
+                buf.extend_from_slice(&d.to_le_bytes());
             }
             Value::Text(s) => {
                 let bytes = s.as_bytes();
@@ -64,10 +68,9 @@ impl Value {
                 buf.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
                 buf.extend_from_slice(bytes);
             }
-            Value::Blob(b) => {
+            Value::Boolean(b) => {
                 buf.push(self.id());
-                buf.extend_from_slice(&(b.len() as u16).to_le_bytes());
-                buf.extend_from_slice(b);
+                buf.push(*b as u8);
             }
             Value::Date(date) => {
                 buf.push(self.id());
@@ -80,13 +83,10 @@ impl Value {
                 buf.extend_from_slice(&dt.and_utc().timestamp().to_le_bytes());
                 buf.extend_from_slice(&dt.and_utc().timestamp_subsec_nanos().to_le_bytes());
             }
-            Value::Long(l) => {
+            Value::Blob(b) => {
                 buf.push(self.id());
-                buf.extend_from_slice(&l.to_le_bytes());
-            }
-            Value::Double(d) => {
-                buf.push(self.id());
-                buf.extend_from_slice(&d.to_le_bytes());
+                buf.extend_from_slice(&(b.len() as u16).to_le_bytes());
+                buf.extend_from_slice(b);
             }
         }
     }
@@ -97,15 +97,11 @@ impl Value {
             0x01 => (Value::Int(i32::from_le_bytes(data[1..5].try_into().unwrap())), 5),
             0x02 => (Value::Long(i64::from_le_bytes(data[1..9].try_into().unwrap())), 9),
             0x03 => (Value::Float(f32::from_le_bytes(data[1..5].try_into().unwrap())), 5),
+            0x04 => (Value::Double(f64::from_le_bytes(data[1..9].try_into().unwrap())), 9),
             0x05 => {
                 let len = u16::from_le_bytes(data[1..3].try_into().unwrap()) as usize;
                 let s = String::from_utf8_lossy(&data[3..3 + len]).to_string();
                 (Value::Text(s), 3 + len)
-            }
-            0x09 => {
-                let len = u16::from_le_bytes(data[1..3].try_into().unwrap()) as usize;
-                let b = data[3..3 + len].to_vec();
-                (Value::Blob(b), 3 + len)
             }
             0x06 => (Value::Boolean(data[1] != 0), 2),
             0x07 => {
@@ -118,8 +114,14 @@ impl Value {
             0x08 => {
                 let timestamp = i64::from_le_bytes(data[1..9].try_into().unwrap());
                 let nanos = u32::from_le_bytes(data[9..13].try_into().unwrap());
-                let dt = chrono::NaiveDateTime::from_timestamp_opt(timestamp, nanos).unwrap();
+                #[allow(deprecated)]
+                let dt = chrono::NaiveDateTime::from_timestamp(timestamp, nanos);
                 (Value::DateTime(dt), 13)
+            }
+            0x09 => {
+                let len = u16::from_le_bytes(data[1..3].try_into().unwrap()) as usize;
+                let b = data[3..3 + len].to_vec();
+                (Value::Blob(b), 3 + len)
             }
             _ => panic!("Unknown value type: {}", data[0]),
         }

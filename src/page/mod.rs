@@ -23,7 +23,9 @@ pub struct Page<'a> {
 
 impl<'a> Page<'a> {
     pub unsafe fn from_raw(index: u32, ptr: *mut u8) -> Self {
-        let data = &mut *(ptr as *mut [u8; PAGE_SIZE]);
+        let data = unsafe {
+            &mut *(ptr as *mut [u8; PAGE_SIZE])
+        };
         Page { index, data }
     }
 

@@ -44,48 +44,67 @@ impl Shard {
     }
 
     async fn get_page(&self, file_id: u32, page_id: u32) -> *mut u8 {
-        let key = make_key(file_id, page_id);
+        let key_to_find = make_key(file_id, page_id);
 
-        for slot in self.slots.iter() {
-            if slot.key.load(Acquire) == key {
+        'search_loop: for slot_idx in 0..SLOTS_PER_SHARD {
+            let current_slot = &self.slots[slot_idx];
+            if current_slot.key.load(Acquire) == key_to_find {
                 loop {
-                    let current_pin = slot.pin.load(Acquire);
-                    if current_pin == usize::MAX {
-                        break;
+                    let pin_val = current_slot.pin.load(Acquire);
+                    if pin_val == usize::MAX {
+                        break 'search_loop;
                     }
-                    if slot.pin.compare_exchange(current_pin, current_pin + 1, AcqRel, Relaxed).is_ok() {
-                        slot.ref_bit.store(true, Release);
-                        return slot.buf.get().cast();
+                    match current_slot.pin.compare_exchange(pin_val, pin_val + 1, AcqRel, Relaxed) {
+                        Ok(_) => {
+                            if current_slot.key.load(Acquire) == key_to_find {
+                                current_slot.ref_bit.store(true, Release);
+                                return current_slot.buf.get().cast();
+                            } else {
+                                current_slot.pin.fetch_sub(1, Release);
+                                break 'search_loop;
+                            }
+                        }
+                        Err(_) => {
+                            // CAS failed, pin_val changed, loop will reload and retry
+                        }
                     }
                 }
             }
         }
 
         loop {
-            let idx = self.hand.fetch_add(1, Relaxed) % SLOTS_PER_SHARD;
-            let s = &self.slots[idx];
+            let victim_idx = self.hand.fetch_add(1, Relaxed) % SLOTS_PER_SHARD;
+            let victim_slot = &self.slots[victim_idx];
 
-            if s.pin.compare_exchange(0, usize::MAX, AcqRel, Relaxed).is_ok() {
-                if s.ref_bit.swap(false, AcqRel) {
-                    s.pin.store(0, Release);
-                    continue;
+            if victim_slot.pin.load(Acquire) == 0 {
+                if victim_slot.pin.compare_exchange(0, usize::MAX, AcqRel, Relaxed).is_ok() {
+                    if victim_slot.ref_bit.swap(false, AcqRel) {
+                        victim_slot.pin.store(0, Release);
+                        tokio::task::yield_now().await;
+                        continue;
+                    }
+
+                    let old_key = victim_slot.key.load(Acquire);
+                    if old_key != u64::MAX && victim_slot.dirty.swap(false, AcqRel) {
+                        let old_file_id = (old_key >> 32) as u32;
+                        let old_page_id = old_key as u32;
+                        let page_data_to_write = unsafe { (*victim_slot.buf.get()).to_vec() };
+                        self.io.schedule_write(old_file_id, old_page_id, page_data_to_write);
+                    }
+
+                    victim_slot.key.store(key_to_find, Release);
+
+                    let page_buffer_for_io = unsafe { &mut *victim_slot.buf.get() };
+                    let _res = self.io.read_into_buf(file_id, page_id, page_buffer_for_io).await;
+
+                    let final_raw_ptr = victim_slot.buf.get();
+
+                    victim_slot.pin.store(1, Release);
+                    victim_slot.ref_bit.store(true, Release);
+                    return final_raw_ptr.cast();
                 }
-                let old_key = s.key.load(Acquire);
-                s.key.store(key, Release);
-                if s.dirty.swap(false, Acquire) {
-                    let fid = (old_key >> 32) as u32;
-                    let pid = old_key as u32;
-                    let bytes = unsafe {
-                        let ptr = s.buf.get();
-                        (&*ptr)[..].to_vec()
-                    };
-                    unsafe { self.io.schedule_write(fid, pid, bytes) };
-                }
-                unsafe { self.io.read_into_buf(file_id, page_id, &mut *s.buf.get()).await; }
-                s.pin.store(1, Release);
-                s.ref_bit.store(true, Release);
-                return s.buf.get().cast();
             }
+            tokio::task::yield_now().await;
         }
     }
 
@@ -107,10 +126,7 @@ impl Shard {
         for slot in self.slots.iter() {
             if slot.key.load(Acquire) == key {
                 if slot.dirty.swap(false, AcqRel) {
-                    let bytes = unsafe {
-                        let ptr = slot.buf.get();
-                        (*ptr)[..].to_vec()
-                    };
+                    let bytes = unsafe { (*slot.buf.get())[..].to_vec() };
                     self.io.schedule_write(file_id, page_id, bytes);
                 }
                 return;
@@ -123,17 +139,13 @@ impl Shard {
             let s = &self.slots[slot_idx];
             if s.dirty.load(Acquire) {
                 let key = s.key.load(Acquire);
-                if key == 0 {
+                if key == u64::MAX {
                     continue;
                 }
-                let fid = (key >> 32) as u32;
-                let pid = key as u32;
-
                 if s.dirty.swap(false, AcqRel) {
-                    let bytes = unsafe {
-                        let ptr = s.buf.get();
-                        (*ptr)[..].to_vec()
-                    };
+                    let fid = (key >> 32) as u32;
+                    let pid = key as u32;
+                    let bytes = unsafe { (*s.buf.get())[..].to_vec() };
                     self.io.schedule_write(fid, pid, bytes);
                 }
             }
@@ -174,23 +186,11 @@ impl BufferPool {
     }
 
     pub async fn flush(&self) -> std::io::Result<()> {
-        for shard in &self.shards {
-            for slot in shard.slots.iter() {
-                if slot.dirty.load(Acquire) {
-                    let key = slot.key.load(Acquire);
-                    let file_id = (key >> 32) as u32;
-                    let page_id = key as u32;
-                    let bytes = unsafe {
-                        let ptr = slot.buf.get();
-                        (&*ptr)[..].to_vec()
-                    };
-                    self.shards[self.pick_shard(file_id, page_id)]
-                        .io
-                        .schedule_write(file_id, page_id, bytes);
-                    slot.dirty.store(false, Release);
-                }
-            }
+        let mut futures = Vec::new();
+        for shard_arc in &self.shards {
+            futures.push(shard_arc.flush_all_dirty_pages_in_shard());
         }
+        futures::future::join_all(futures).await;
         Ok(())
     }
 }

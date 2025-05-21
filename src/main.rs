@@ -17,7 +17,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
-use tokio::sync::RwLock;
 use crate::page::io::{IoManager, FileSystemManager};
 use crate::page::tuple::Tuple;
 
@@ -63,8 +62,6 @@ impl Drop for DebugTimer {
 }
 
 struct QueryEngine {
-    buffer_pool: Arc<BufferPool>,
-    catalog: Arc<RwLock<TableCatalog>>,
     compiler: PlanCompiler,
     arena: Arena,
     executor: QueryExecutor,
@@ -109,17 +106,14 @@ impl QueryEngine {
                 cat
             }
         };
-
-        let catalog = Arc::new(RwLock::new(catalog));
         drop(init_timer);
+        let catalog = Arc::new(catalog);
 
         Ok(Self {
-            buffer_pool,
-            catalog: catalog.clone(),
-            compiler: PlanCompiler::new(),
+            compiler: PlanCompiler::new(catalog.clone()),
             arena: Arena::with_capacity(10000, 1000),
             executor: QueryExecutor::new(catalog),
-            debug_mode,
+            debug_mode
         })
     }
 
@@ -159,12 +153,12 @@ impl QueryEngine {
         drop(transform_timer);
 
         let compile_timer = DebugTimer::new("Query compilation", self.debug_mode);
-        let catalog_lock = Arc::new(self.catalog.read().await);
-        let compiled = self.compiler.compile(&transformed, catalog_lock).unwrap();
+        let compiled = self.compiler.compile(&transformed).unwrap();
+        drop(transformed);
         drop(compile_timer);
 
         let execute_timer = DebugTimer::new("Query execution", self.debug_mode);
-        let mut plan = self.executor.execute(&compiled).await?;
+        let plan = self.executor.execute(&compiled).await?;
         let tuples = plan.collect::<Vec<Tuple>>().await;
 
         let execution_elapsed = execute_timer.elapsed();
