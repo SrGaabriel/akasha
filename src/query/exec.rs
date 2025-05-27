@@ -1,6 +1,6 @@
 use crate::page::tuple::{Tuple, Value};
-use crate::query::op::TableOp;
 use crate::query::Transaction;
+use crate::query::op::TableOp;
 use crate::table::heap::scan_table;
 use crate::table::{ColumnInfo, TableCatalog, TableInfo};
 use futures::Stream;
@@ -11,22 +11,20 @@ use std::sync::Arc;
 pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
 
 pub struct QueryExecutor {
-    catalog: Arc<TableCatalog>
+    catalog: Arc<TableCatalog>,
 }
 
 pub enum PlanResult {
     Stream(Vec<TableOp>),
     ModifyData {
         ops: Vec<TableOp>,
-        returning: Option<Vec<usize>>
+        returning: Option<Vec<usize>>,
     },
 }
 
 impl QueryExecutor {
     pub fn new(catalog: Arc<TableCatalog>) -> Self {
-        Self {
-            catalog
-        }
+        Self { catalog }
     }
 
     pub async fn execute(
@@ -43,15 +41,19 @@ impl QueryExecutor {
                 let base_stream = scan_table(heap).await;
                 Ok(Self::apply_ops(base_stream, ops))
             }
-            Transaction::Insert { table, values, ops, returning } => {
+            Transaction::Insert {
+                table,
+                values,
+                ops,
+                returning,
+            } => {
                 let physical_table = self
                     .catalog
                     .get_table(&table)
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
                 let tuple = Self::build_tuple(&physical_table.info, values.clone())?;
                 let heap = physical_table.heap.clone();
-                heap
-                    .insert_tuple(&tuple)
+                heap.insert_tuple(&tuple)
                     .await
                     .map_err(|e| format!("Insert failed: {}", e))?;
 
@@ -65,10 +67,7 @@ impl QueryExecutor {
         }
     }
 
-    fn build_tuple(
-        table_info: &TableInfo,
-        values: Vec<(String, Value)>
-    ) -> Result<Tuple, String> {
+    fn build_tuple(table_info: &TableInfo, values: Vec<(String, Value)>) -> Result<Tuple, String> {
         let value_map: HashMap<String, Value> = values.into_iter().collect();
         let columns: Vec<(String, ColumnInfo)> = table_info
             .columns
@@ -91,7 +90,9 @@ impl QueryExecutor {
                 ));
             }
         }
-        Ok(Tuple { values: tuple_values })
+        Ok(Tuple {
+            values: tuple_values,
+        })
     }
 
     fn apply_ops<S>(
@@ -101,7 +102,8 @@ impl QueryExecutor {
     where
         S: Stream<Item = Tuple> + Send + 'static,
     {
-        let mut result_stream = Box::pin(stream) as Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
+        let mut result_stream =
+            Box::pin(stream) as Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
         for op in ops {
             result_stream = op.apply(result_stream);
         }

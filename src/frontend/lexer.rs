@@ -1,5 +1,5 @@
-use std::fmt::Display;
 use crate::frontend::err::QueryParsingError;
+use std::fmt::Display;
 
 pub type LexResult<'src> = Result<Vec<Token<'src>>, QueryParsingError>;
 
@@ -55,7 +55,7 @@ pub enum TokenKind {
     False,
     Pipe,
     EqualsEquals,
-    NotEquals
+    NotEquals,
 }
 
 pub struct Lexer<'src> {
@@ -158,7 +158,10 @@ impl<'src> Lexer<'src> {
             kind,
             value: text,
             indent: self.current_indent,
-            span: Span { start: start_pos, end: end_pos },
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+            },
         }
     }
 
@@ -194,7 +197,10 @@ impl<'src> Lexer<'src> {
             kind: TokenKind::Number,
             value: &self.source[start_pos..end_pos],
             indent: self.current_indent,
-            span: Span { start: start_pos, end: end_pos },
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+            },
         }
     }
 
@@ -209,7 +215,10 @@ impl<'src> Lexer<'src> {
                     kind: TokenKind::String,
                     value: &self.source[start_pos..end_pos],
                     indent: self.current_indent,
-                    span: Span { start: start_pos, end: end_pos },
+                    span: Span {
+                        start: start_pos,
+                        end: end_pos,
+                    },
                 });
             }
             self.advance();
@@ -226,7 +235,10 @@ impl<'src> Lexer<'src> {
             kind: TokenKind::RightArrow,
             value: &self.source[start_pos..end_pos],
             indent: self.current_indent,
-            span: Span { start: start_pos, end: end_pos },
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+            },
         }
     }
 
@@ -239,7 +251,10 @@ impl<'src> Lexer<'src> {
             kind: TokenKind::Application,
             value: &self.source[start_pos..end_pos],
             indent: self.current_indent,
-            span: Span { start: start_pos, end: end_pos },
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+            },
         }
     }
 
@@ -275,7 +290,10 @@ impl<'src> Lexer<'src> {
                         kind: TokenKind::Newline,
                         value: &self.source[start_pos..end_pos],
                         indent: self.current_indent,
-                        span: Span { start: start_pos, end: end_pos },
+                        span: Span {
+                            start: start_pos,
+                            end: end_pos,
+                        },
                     });
                 }
                 TokenKind::Newline
@@ -286,7 +304,10 @@ impl<'src> Lexer<'src> {
             kind,
             value: &self.source[start_pos..end_pos],
             indent: self.current_indent,
-            span: Span { start: start_pos, end: end_pos },
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+            },
         })
     }
 
@@ -346,7 +367,8 @@ impl<'src> Lexer<'src> {
                         tokens.push(self.read_single_char_token(c)?);
                     }
                 }
-                '+' | '*' | '/' | '(' | ')' | '{' | '}' | '[' | ']' | ',' | '.' | '$' | '=' | '\\' | '<' | '>' => {
+                '+' | '*' | '/' | '(' | ')' | '{' | '}' | '[' | ']' | ',' | '.' | '$' | '='
+                | '\\' | '<' | '>' => {
                     tokens.push(self.read_single_char_token(c)?);
                 }
                 _ => return Err(QueryParsingError::UnexpectedCharacter(c)),

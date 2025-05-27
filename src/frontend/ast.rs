@@ -1,9 +1,9 @@
 use crate::frontend::lexer::TokenKind;
+use crate::frontend::print::PrettyPrinter;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
-use crate::frontend::print::PrettyPrinter;
 
 #[derive(Default)]
 pub struct Interner {
@@ -175,7 +175,10 @@ impl Arena {
         for &arg in args {
             args_vec.push(arg);
         }
-        self.alloc(Expr::FunctionCall { func, args: args_vec })
+        self.alloc(Expr::FunctionCall {
+            func,
+            args: args_vec,
+        })
     }
 
     pub fn create_tuple(&mut self, items: &[NodeId]) -> NodeId {
@@ -203,14 +206,16 @@ impl Arena {
     }
 
     pub fn create_lambda(&mut self, param_names: &[&str], body: NodeId) -> NodeId {
-        let params = param_names.iter()
+        let params = param_names
+            .iter()
             .map(|&name| self.intern_str(name))
             .collect();
         self.alloc(Expr::Lambda { params, body })
     }
 
     pub fn create_instance(&mut self, fields: &[(&str, NodeId)]) -> NodeId {
-        let instance = fields.iter()
+        let instance = fields
+            .iter()
             .map(|&(name, value)| {
                 let name_id = self.intern_str(name);
                 (name_id, value)
@@ -221,12 +226,19 @@ impl Arena {
 
     pub fn create_field_access(&mut self, base: NodeId, field: &str) -> NodeId {
         let field_id = self.intern_str(field);
-        self.alloc(Expr::FieldAccess { base, field: field_id })
+        self.alloc(Expr::FieldAccess {
+            base,
+            field: field_id,
+        })
     }
 
     pub fn create_let(&mut self, name: &str, value: NodeId, body: NodeId) -> NodeId {
         let name_id = self.intern_str(name);
-        self.alloc(Expr::Let { name: name_id, value, body })
+        self.alloc(Expr::Let {
+            name: name_id,
+            value,
+            body,
+        })
     }
 
     pub fn extract_function_call(&self, id: NodeId) -> Option<(NodeId, Vec<NodeId>)> {
@@ -258,7 +270,7 @@ impl<'a> AstTraversal<'a> {
 
     pub fn transform<F>(&self, node_id: NodeId, transformer: F) -> NodeId
     where
-        F: Fn(&Arena, NodeId) -> NodeId
+        F: Fn(&Arena, NodeId) -> NodeId,
     {
         transformer(self.arena, node_id)
     }
@@ -277,61 +289,16 @@ impl<'a> AstTraversal<'a> {
         T: Clone,
     {
         match self.arena.get(node_id) {
-            Expr::BinaryOp { op: token_op, left, right } => {
+            Expr::BinaryOp {
+                op: token_op,
+                left,
+                right,
+            } => {
                 let left_val = self.fold_binary_ops_impl(*left, init.clone(), op);
                 let right_val = self.fold_binary_ops_impl(*right, init, op);
                 op(left_val, token_op, right_val)
             }
             _ => init,
-        }
-    }
-}
-
-pub struct Evaluator;
-
-impl Evaluator {
-    pub fn evaluate(&mut self, arena: &Arena, node_id: NodeId) -> Value {
-        match arena.get(node_id) {
-            Expr::Reference(name) => {
-                Value::String(arena.resolve_str(*name).to_string())
-            }
-            Expr::Number(num_str) => {
-                let num_str = arena.resolve_str(*num_str);
-                if let Ok(n) = num_str.parse::<i64>() {
-                    Value::Integer(n)
-                } else if let Ok(f) = num_str.parse::<f64>() {
-                    Value::Float(f)
-                } else {
-                    Value::Error("Invalid number format".to_string())
-                }
-            }
-            Expr::StringLit(s) => {
-                Value::String(arena.resolve_str(*s).to_string())
-            }
-            Expr::Bool(b) => {
-                Value::Boolean(*b)
-            }
-            Expr::BinaryOp { op, left, right } => {
-                let lhs = self.evaluate(arena, *left);
-                let rhs = self.evaluate(arena, *right);
-                self.eval_binary_op(*op, lhs, rhs)
-            }
-            _ => Value::Null,
-        }
-    }
-
-    fn eval_binary_op(&self, op: TokenKind, lhs: Value, rhs: Value) -> Value {
-        match (op, &lhs, &rhs) {
-            (TokenKind::Plus, Value::Integer(a), Value::Integer(b)) => {
-                Value::Integer(a + b)
-            }
-            (TokenKind::Plus, Value::Float(a), Value::Float(b)) => {
-                Value::Float(a + b)
-            }
-            (TokenKind::Plus, Value::String(a), Value::String(b)) => {
-                Value::String(format!("{}{}", a, b))
-            }
-            _ => Value::Error(format!("Unsupported operation: {:?}", op)),
         }
     }
 }
@@ -345,16 +312,4 @@ pub enum Value {
     String(String),
     List(Vec<Value>),
     Error(String),
-}
-
-impl Default for PrettyPrinter {
-    fn default() -> Self {
-        PrettyPrinter::new()
-    }
-}
-
-impl Default for Evaluator {
-    fn default() -> Self {
-        Evaluator
-    }
 }

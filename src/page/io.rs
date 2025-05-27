@@ -1,8 +1,8 @@
-use crate::page::file::{RelationFile, EXTENSION};
 use crate::page::PAGE_SIZE;
+use crate::page::file::{EXTENSION, RelationFile};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 pub struct FileSystemManager {
     home_dir: String,
@@ -59,7 +59,7 @@ impl IoManager {
         &self,
         file_id: u32,
         page_id: u32,
-        buf: &mut [u8; PAGE_SIZE]
+        buf: &mut [u8; PAGE_SIZE],
     ) -> std::io::Result<()> {
         let mut map = self.open_files.lock().await;
         let pf = match map.get_mut(&file_id) {
@@ -76,11 +76,17 @@ impl IoManager {
 
     pub async fn get_page_count(&self, file_id: u32) -> std::io::Result<u32> {
         let mut map = self.open_files.lock().await;
-        let pf = map.entry(file_id).or_insert(self.inner.open_page_file(file_id).await?);
+        let pf = map
+            .entry(file_id)
+            .or_insert(self.inner.open_page_file(file_id).await?);
         pf.get_page_count().await
     }
 
     pub fn schedule_write(&self, file_id: u32, page_id: u32, data: Vec<u8>) {
-        let _ = self.tx.send(WriteJob { file_id, page_id, data });
+        let _ = self.tx.send(WriteJob {
+            file_id,
+            page_id,
+            data,
+        });
     }
 }

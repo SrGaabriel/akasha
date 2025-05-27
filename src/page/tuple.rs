@@ -94,10 +94,22 @@ impl Value {
     pub fn read_from_bytes(data: &[u8]) -> (Self, usize) {
         match data[0] {
             0x00 => (Value::Null, 1),
-            0x01 => (Value::Int(i32::from_le_bytes(data[1..5].try_into().unwrap())), 5),
-            0x02 => (Value::Long(i64::from_le_bytes(data[1..9].try_into().unwrap())), 9),
-            0x03 => (Value::Float(f32::from_le_bytes(data[1..5].try_into().unwrap())), 5),
-            0x04 => (Value::Double(f64::from_le_bytes(data[1..9].try_into().unwrap())), 9),
+            0x01 => (
+                Value::Int(i32::from_le_bytes(data[1..5].try_into().unwrap())),
+                5,
+            ),
+            0x02 => (
+                Value::Long(i64::from_le_bytes(data[1..9].try_into().unwrap())),
+                9,
+            ),
+            0x03 => (
+                Value::Float(f32::from_le_bytes(data[1..5].try_into().unwrap())),
+                5,
+            ),
+            0x04 => (
+                Value::Double(f64::from_le_bytes(data[1..9].try_into().unwrap())),
+                9,
+            ),
             0x05 => {
                 let len = u16::from_le_bytes(data[1..3].try_into().unwrap()) as usize;
                 let s = String::from_utf8_lossy(&data[3..3 + len]).to_string();
@@ -160,14 +172,14 @@ impl Value {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum DataType {
-    Null, // 0x00
-    Int, // 0x01
-    Long, // 0x02
-    Float, // 0x03
-    Double, // 0x04
-    Text, // 0x05
-    Boolean, // 0x06
-    Date, // 0x07
+    Null,     // 0x00
+    Int,      // 0x01
+    Long,     // 0x02
+    Float,    // 0x03
+    Double,   // 0x04
+    Text,     // 0x05
+    Boolean,  // 0x06
+    Date,     // 0x07
     DateTime, // 0x08
-    Blob, // 0x09
+    Blob,     // 0x09
 }

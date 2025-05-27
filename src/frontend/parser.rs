@@ -23,7 +23,11 @@ pub struct Parser<'src> {
 
 impl<'src> Parser<'src> {
     pub fn new(tokens: &'src [Token<'src>], arena: &'src mut Arena) -> Self {
-        Self { tokens, pos: 0, arena }
+        Self {
+            tokens,
+            pos: 0,
+            arena,
+        }
     }
 
     pub fn parse_expression(&mut self) -> Result<NodeId, ParseError<'src>> {
@@ -31,7 +35,10 @@ impl<'src> Parser<'src> {
     }
 
     fn peek(&self) -> Result<Token<'src>, ParseError<'src>> {
-        self.tokens.get(self.pos).copied().ok_or(ParseError::UnexpectedEndOfInput)
+        self.tokens
+            .get(self.pos)
+            .copied()
+            .ok_or(ParseError::UnexpectedEndOfInput)
     }
 
     fn consume(&mut self) -> Result<Token<'src>, ParseError<'src>> {
@@ -158,9 +165,16 @@ impl<'src> Parser<'src> {
         let mut items = vec![first];
         while let Ok(current_pos) = self.save_position() {
             if self.peek_is_any(&[
-                TokenKind::Plus, TokenKind::Minus, TokenKind::Asterisk, TokenKind::Slash,
-                TokenKind::RightParenthesis, TokenKind::RightBracket, TokenKind::Comma,
-                TokenKind::In, TokenKind::Newline, TokenKind::Application
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Asterisk,
+                TokenKind::Slash,
+                TokenKind::RightParenthesis,
+                TokenKind::RightBracket,
+                TokenKind::Comma,
+                TokenKind::In,
+                TokenKind::Newline,
+                TokenKind::Application,
             ]) {
                 break;
             }
@@ -251,7 +265,9 @@ impl<'src> Parser<'src> {
         }
 
         if param_names.is_empty() {
-            return Err(ParseError::Custom("Lambda expression needs at least one parameter".to_string()));
+            return Err(ParseError::Custom(
+                "Lambda expression needs at least one parameter".to_string(),
+            ));
         }
 
         self.expect(TokenKind::RightArrow)?;
@@ -358,7 +374,10 @@ impl<'src> Parser<'src> {
         Ok(self.arena.create_let(id_token.value, value, body))
     }
 
-    fn parse_indented_bindings(&mut self, indent: usize) -> Result<Vec<(&'src str, NodeId)>, ParseError<'src>> {
+    fn parse_indented_bindings(
+        &mut self,
+        indent: usize,
+    ) -> Result<Vec<(&'src str, NodeId)>, ParseError<'src>> {
         let mut bindings = Vec::new();
 
         loop {
@@ -380,7 +399,9 @@ impl<'src> Parser<'src> {
         }
 
         if bindings.is_empty() {
-            return Err(ParseError::Custom("Expected at least one binding in let expression".to_string()));
+            return Err(ParseError::Custom(
+                "Expected at least one binding in let expression".to_string(),
+            ));
         }
 
         Ok(bindings)
@@ -393,7 +414,7 @@ impl<'src> Parser<'src> {
             TokenKind::GreaterThan,
             TokenKind::LessThan,
             TokenKind::EqualsEquals,
-            TokenKind::NotEquals
+            TokenKind::NotEquals,
         ]) {
             let op_token = self.consume()?;
             let right = self.numeric_expression()?;
@@ -403,7 +424,11 @@ impl<'src> Parser<'src> {
         Ok(left)
     }
 
-    fn create_nested_lets(&mut self, bindings: Vec<(&'src str, NodeId)>, body: NodeId) -> Result<NodeId, ParseError<'src>> {
+    fn create_nested_lets(
+        &mut self,
+        bindings: Vec<(&'src str, NodeId)>,
+        body: NodeId,
+    ) -> Result<NodeId, ParseError<'src>> {
         let mut result = body;
 
         for (name, value) in bindings.into_iter().rev() {
@@ -421,7 +446,10 @@ impl<'src> Parser<'src> {
         Ok(self.arena.create_block(&exprs))
     }
 
-    fn comma_separated_expressions(&mut self, end_token: TokenKind) -> Result<Vec<NodeId>, ParseError<'src>> {
+    fn comma_separated_expressions(
+        &mut self,
+        end_token: TokenKind,
+    ) -> Result<Vec<NodeId>, ParseError<'src>> {
         if let Ok(token) = self.peek() {
             if token.kind == end_token {
                 self.consume()?;
@@ -490,7 +518,10 @@ impl<'src> Parser<'src> {
     }
 }
 
-pub fn parse_expression<'src>(tokens: &'src [Token<'src>], arena: &'src mut Arena) -> Result<NodeId, ParseError<'src>> {
+pub fn parse_expression<'src>(
+    tokens: &'src [Token<'src>],
+    arena: &'src mut Arena,
+) -> Result<NodeId, ParseError<'src>> {
     let mut parser = Parser::new(tokens, arena);
     parser.parse_expression()
 }

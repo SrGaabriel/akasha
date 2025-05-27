@@ -1,8 +1,11 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::{Acquire, Release, Relaxed, AcqRel}};
-use std::sync::Arc;
 use crate::page::PAGE_SIZE;
-use std::cell::UnsafeCell;
 use crate::page::io::IoManager;
+use std::cell::UnsafeCell;
+use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicBool, AtomicU64, AtomicUsize,
+    Ordering::{AcqRel, Acquire, Relaxed, Release},
+};
 
 const SHARD_COUNT: usize = 4;
 const SLOTS_PER_SHARD: usize = 1024;
@@ -39,8 +42,14 @@ struct Shard {
 impl Shard {
     fn new(io: Arc<IoManager>) -> Self {
         let mut v = Vec::with_capacity(SLOTS_PER_SHARD);
-        for _ in 0..SLOTS_PER_SHARD { v.push(Slot::new()); }
-        Shard { slots: v.into_boxed_slice(), hand: AtomicUsize::new(0), io }
+        for _ in 0..SLOTS_PER_SHARD {
+            v.push(Slot::new());
+        }
+        Shard {
+            slots: v.into_boxed_slice(),
+            hand: AtomicUsize::new(0),
+            io,
+        }
     }
 
     async fn get_page(&self, file_id: u32, page_id: u32) -> *mut u8 {
@@ -54,7 +63,10 @@ impl Shard {
                     if pin_val == usize::MAX {
                         break 'search_loop;
                     }
-                    match current_slot.pin.compare_exchange(pin_val, pin_val + 1, AcqRel, Relaxed) {
+                    match current_slot
+                        .pin
+                        .compare_exchange(pin_val, pin_val + 1, AcqRel, Relaxed)
+                    {
                         Ok(_) => {
                             if current_slot.key.load(Acquire) == key_to_find {
                                 current_slot.ref_bit.store(true, Release);
@@ -77,7 +89,11 @@ impl Shard {
             let victim_slot = &self.slots[victim_idx];
 
             if victim_slot.pin.load(Acquire) == 0 {
-                if victim_slot.pin.compare_exchange(0, usize::MAX, AcqRel, Relaxed).is_ok() {
+                if victim_slot
+                    .pin
+                    .compare_exchange(0, usize::MAX, AcqRel, Relaxed)
+                    .is_ok()
+                {
                     if victim_slot.ref_bit.swap(false, AcqRel) {
                         victim_slot.pin.store(0, Release);
                         tokio::task::yield_now().await;
@@ -89,13 +105,17 @@ impl Shard {
                         let old_file_id = (old_key >> 32) as u32;
                         let old_page_id = old_key as u32;
                         let page_data_to_write = unsafe { (*victim_slot.buf.get()).to_vec() };
-                        self.io.schedule_write(old_file_id, old_page_id, page_data_to_write);
+                        self.io
+                            .schedule_write(old_file_id, old_page_id, page_data_to_write);
                     }
 
                     victim_slot.key.store(key_to_find, Release);
 
                     let page_buffer_for_io = unsafe { &mut *victim_slot.buf.get() };
-                    let _res = self.io.read_into_buf(file_id, page_id, page_buffer_for_io).await;
+                    let _res = self
+                        .io
+                        .read_into_buf(file_id, page_id, page_buffer_for_io)
+                        .await;
 
                     let final_raw_ptr = victim_slot.buf.get();
 
@@ -160,7 +180,9 @@ pub struct BufferPool {
 impl BufferPool {
     pub fn new(io: Arc<IoManager>) -> Arc<Self> {
         let mut shards = Vec::with_capacity(SHARD_COUNT);
-        for _ in 0..SHARD_COUNT { shards.push(Arc::new(Shard::new(io.clone()))); }
+        for _ in 0..SHARD_COUNT {
+            shards.push(Arc::new(Shard::new(io.clone())));
+        }
         Arc::new(BufferPool { shards })
     }
 

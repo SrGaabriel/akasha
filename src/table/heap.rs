@@ -1,11 +1,14 @@
 use crate::page::Page;
+use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::Tuple;
-use tokio::sync::Mutex;
-use std::sync::Arc;
-use futures::{Stream, Future, task::{Context, Poll}};
+use futures::{
+    Future, Stream,
+    task::{Context, Poll},
+};
 use std::pin::Pin;
-use crate::page::io::IoManager;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct TableHeap {
     pub file_id: u32,
@@ -27,7 +30,10 @@ impl TableHeap {
         buffer_pool: Arc<BufferPool>,
         io: Arc<IoManager>,
     ) -> Result<Arc<Self>, String> {
-        let page_count = io.get_page_count(file_id).await.map_err(|e| e.to_string())?;
+        let page_count = io
+            .get_page_count(file_id)
+            .await
+            .map_err(|e| e.to_string())?;
         let page_ids = (0..page_count).collect::<Vec<u32>>();
         Ok(Arc::new(TableHeap {
             file_id,
@@ -44,7 +50,9 @@ impl TableHeap {
             let mut page = unsafe { Page::from_raw(pid, ptr) };
 
             if page.insert_tuple(tuple).is_ok() {
-                self.buffer_pool.unpin_and_flush(self.file_id, pid, true).await;
+                self.buffer_pool
+                    .unpin_and_flush(self.file_id, pid, true)
+                    .await;
                 return Ok(());
             } else {
                 self.buffer_pool.unpin(self.file_id, pid, false);
@@ -59,11 +67,12 @@ impl TableHeap {
         page.insert_tuple(tuple)?;
         pages_guard.push(new_pid);
 
-        self.buffer_pool.unpin_and_flush(self.file_id, new_pid, true).await;
+        self.buffer_pool
+            .unpin_and_flush(self.file_id, new_pid, true)
+            .await;
         Ok(())
     }
 }
-
 
 enum OptimizedTableIteratorState {
     ReadyToFetchNextPage,
@@ -104,14 +113,20 @@ impl Stream for OptimizedTableIterator {
 
         loop {
             match &mut this.state {
-                OptimizedTableIteratorState::IteratingPage { page_id, page_ptr, current_slot_idx } => {
+                OptimizedTableIteratorState::IteratingPage {
+                    page_id,
+                    page_ptr,
+                    current_slot_idx,
+                } => {
                     let page = unsafe { Page::from_raw(*page_id, *page_ptr) };
 
                     if let Some(tuple) = page.get_tuple(*current_slot_idx) {
                         *current_slot_idx += 1;
                         return Poll::Ready(Some(tuple));
                     } else {
-                        this.heap.buffer_pool.unpin(this.heap.file_id, *page_id, false);
+                        this.heap
+                            .buffer_pool
+                            .unpin(this.heap.file_id, *page_id, false);
 
                         this.state = OptimizedTableIteratorState::ReadyToFetchNextPage;
                         continue;
@@ -128,7 +143,10 @@ impl Stream for OptimizedTableIterator {
                     let heap_clone = this.heap.clone();
 
                     let fetch_future = async move {
-                        let page_ptr = heap_clone.buffer_pool.get_page(heap_clone.file_id, pid_to_fetch).await;
+                        let page_ptr = heap_clone
+                            .buffer_pool
+                            .get_page(heap_clone.file_id, pid_to_fetch)
+                            .await;
                         if page_ptr.is_null() {
                             None
                         } else {
@@ -136,7 +154,9 @@ impl Stream for OptimizedTableIterator {
                         }
                     };
 
-                    this.state = OptimizedTableIteratorState::FetchingPage { future: Box::pin(fetch_future) };
+                    this.state = OptimizedTableIteratorState::FetchingPage {
+                        future: Box::pin(fetch_future),
+                    };
                     continue;
                 }
 

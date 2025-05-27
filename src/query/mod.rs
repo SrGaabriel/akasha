@@ -1,14 +1,14 @@
-pub mod transformer;
-pub mod err;
-pub mod optimizer;
 pub mod compiler;
+pub mod err;
 pub mod exec;
 pub mod op;
+pub mod optimizer;
+pub mod transformer;
 
-use std::rc::Rc;
 use crate::frontend::ast::NodeId;
 use crate::page::tuple::Value;
 use crate::query::op::TableOp;
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub enum Transaction {
@@ -16,12 +16,12 @@ pub enum Transaction {
         table: String,
         values: Vec<(String, Value)>,
         ops: Vec<TableOp>,
-        returning: bool
+        returning: bool,
     },
     Select {
         table: String,
-        ops: Vec<TableOp>
-    }
+        ops: Vec<TableOp>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ pub enum QueryExpr {
 
     Lambda {
         params: Vec<String>,
-        body: NodeId
+        body: NodeId,
     },
 
     Reference(String),
@@ -73,23 +73,18 @@ pub enum QueryExpr {
 #[derive(Debug, Clone)]
 pub enum TransactionType {
     Scan {
-        table_name: String
+        table_name: String,
     },
     Insert {
         table_name: String,
-        value: Rc<QueryExpr>
-    }
+        value: Rc<QueryExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum TransactionOp {
-    Filter {
-        predicate: Rc<PredicateExpr>,
-    },
-    Limit {
-        count: usize,
-        offset: Option<usize>,
-    }
+    Filter { predicate: Rc<PredicateExpr> },
+    Limit { count: usize, offset: Option<usize> },
 }
 
 #[derive(Debug, Clone)]
@@ -119,7 +114,7 @@ pub enum PredicateExpr {
     IsNull(QueryExpr),
     IsNotNull(QueryExpr),
     In(QueryExpr, Vec<QueryExpr>),
-    Exists(Rc<QueryExpr>)
+    Exists(Rc<QueryExpr>),
 }
 
 type SymbolInfo = Rc<QueryExpr>;
@@ -146,5 +141,5 @@ pub enum ComparisonOperator {
     Lt,
     LtEq,
     Like,
-    NotLike
+    NotLike,
 }

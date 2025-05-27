@@ -1,7 +1,7 @@
+use crate::page::{PAGE_SIZE, Page};
 use std::io::SeekFrom;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use crate::page::{Page, PAGE_SIZE};
 
 pub const EXTENSION: &str = "record";
 
@@ -41,11 +41,7 @@ impl RelationFile {
         Ok(())
     }
 
-    pub async fn write_page_data(
-        &mut self,
-        page_id: u32,
-        data: Vec<u8>
-    ) -> std::io::Result<()> {
+    pub async fn write_page_data(&mut self, page_id: u32, data: Vec<u8>) -> std::io::Result<()> {
         assert_eq!(data.len(), PAGE_SIZE, "data must be exactly one page");
         let offset = (page_id as u64) * (PAGE_SIZE as u64);
         self.file.seek(SeekFrom::Start(offset)).await?;

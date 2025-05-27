@@ -3,7 +3,9 @@
 use crate::frontend::ast::Arena;
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::parse_expression;
+use crate::page::io::{FileSystemManager, IoManager};
 use crate::page::pool::BufferPool;
+use crate::page::tuple::Tuple;
 use crate::query::compiler::PlanCompiler;
 use crate::query::exec::QueryExecutor;
 use crate::query::optimizer::IdentityOptimizer;
@@ -17,13 +19,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
-use crate::page::io::{IoManager, FileSystemManager};
-use crate::page::tuple::Tuple;
 
+pub mod frontend;
 pub mod page;
 pub mod query;
 pub mod table;
-pub mod frontend;
 
 struct DebugTimer {
     name: String,
@@ -83,7 +83,7 @@ impl QueryEngine {
             Ok(cat) => {
                 println!("Loaded catalog with {} tables", cat.tables.len());
                 cat
-            },
+            }
             Err(err) => {
                 eprintln!("Error loading catalog: {}", err);
                 let mut cat = TableCatalog::new(buffer_pool.clone());
@@ -98,10 +98,8 @@ impl QueryEngine {
                     default: None,
                     nullable: false,
                 });
-                cat.create_table(
-                    "users".to_string(),
-                    TableInfo { columns }
-                ).await?;
+                cat.create_table("users".to_string(), TableInfo { columns })
+                    .await?;
                 cat.persist(&*home_dir).await?;
                 cat
             }
@@ -113,11 +111,14 @@ impl QueryEngine {
             compiler: PlanCompiler::new(catalog.clone()),
             arena: Arena::with_capacity(10000, 1000),
             executor: QueryExecutor::new(catalog),
-            debug_mode
+            debug_mode,
         })
     }
 
-    async fn execute_query_file(&mut self, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    async fn execute_query_file(
+        &mut self,
+        file_path: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         println!("Executing query from file: {}", file_path);
 
         let file_timer = DebugTimer::new("File loading", self.debug_mode);
@@ -145,10 +146,7 @@ impl QueryEngine {
         drop(parse_timer);
 
         let transform_timer = DebugTimer::new("AST transformation", self.debug_mode);
-        let mut transformer = AstToQueryTransformer::new(
-            &self.arena,
-            Box::new(IdentityOptimizer),
-        );
+        let mut transformer = AstToQueryTransformer::new(&self.arena, Box::new(IdentityOptimizer));
         let transformed = transformer.transform(root_id)?;
         drop(transform_timer);
 
@@ -165,7 +163,12 @@ impl QueryEngine {
         let total_elapsed = total_timer.elapsed();
 
         println!("Executed: {:?}", compiled);
-        println!("{:?} Query executed in {} and completed in {}", tuples.len(), execution_elapsed, total_elapsed);
+        println!(
+            "{:?} Query executed in {} and completed in {}",
+            tuples.len(),
+            execution_elapsed,
+            total_elapsed
+        );
 
         Ok(())
     }
@@ -227,7 +230,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 drop(list_timer);
-            },
+            }
             _ => {
                 let file_path = if input_str.ends_with(".aka") {
                     format!("queries/{}", input_str)

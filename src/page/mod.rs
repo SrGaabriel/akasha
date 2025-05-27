@@ -1,7 +1,7 @@
 pub mod file;
+pub mod io;
 pub mod pool;
 pub mod tuple;
-pub mod io;
 
 use crate::page::tuple::Tuple;
 use std::mem::size_of;
@@ -23,9 +23,7 @@ pub struct Page<'a> {
 
 impl<'a> Page<'a> {
     pub unsafe fn from_raw(index: u32, ptr: *mut u8) -> Self {
-        let data = unsafe {
-            &mut *(ptr as *mut [u8; PAGE_SIZE])
-        };
+        let data = unsafe { &mut *(ptr as *mut [u8; PAGE_SIZE]) };
         Page { index, data }
     }
 
@@ -63,7 +61,10 @@ impl<'a> Page<'a> {
         let start = new_data_start;
         d[start..start + (len as usize)].copy_from_slice(&bytes);
 
-        let meta = SlotMeta { offset: start as u16, length: len };
+        let meta = SlotMeta {
+            offset: start as u16,
+            length: len,
+        };
 
         let slot_pos = HEADER_SIZE + slot_count * SLOT_META_SIZE;
         d[slot_pos..slot_pos + 2].copy_from_slice(&meta.offset.to_le_bytes());
@@ -101,7 +102,6 @@ impl<'a> Page<'a> {
 
         page
     }
-
 
     pub fn to_bytes(&self) -> [u8; PAGE_SIZE] {
         let mut bytes = [0; PAGE_SIZE];
