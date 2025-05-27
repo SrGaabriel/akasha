@@ -1,15 +1,14 @@
-// This will probably have some redundant structs at the start, but we'll gradually be replacing old architecture with this one
-
-pub mod transformer;
-pub mod err;
-pub mod optimizer;
 pub mod compiler;
+pub mod err;
 pub mod exec;
 pub mod op;
+pub mod optimizer;
+pub mod transformer;
 
 use crate::frontend::ast::NodeId;
 use crate::page::tuple::Value;
 use crate::query::op::TableOp;
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub enum Transaction {
@@ -17,12 +16,12 @@ pub enum Transaction {
         table: String,
         values: Vec<(String, Value)>,
         ops: Vec<TableOp>,
-        returning: bool
+        returning: bool,
     },
     Select {
         table: String,
-        ops: Vec<TableOp>
-    }
+        ops: Vec<TableOp>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -33,13 +32,13 @@ pub enum QueryExpr {
     },
 
     Bind {
-        input: Box<QueryExpr>,
-        func: Box<QueryExpr>,
+        input: Rc<QueryExpr>,
+        func: Rc<QueryExpr>,
     },
 
     Lambda {
         params: Vec<String>,
-        body: NodeId
+        body: NodeId,
     },
 
     Reference(String),
@@ -47,23 +46,23 @@ pub enum QueryExpr {
     Column(String),
 
     BinaryOp {
-        left: Box<QueryExpr>,
+        left: Rc<QueryExpr>,
         op: BinaryOperator,
-        right: Box<QueryExpr>,
+        right: Rc<QueryExpr>,
     },
 
     Apply {
-        func: Box<QueryExpr>,
+        func: Rc<QueryExpr>,
         args: Vec<QueryExpr>,
     },
 
     Binding {
         name: String,
-        value: Box<QueryExpr>,
-        body: Box<QueryExpr>,
+        value: Rc<QueryExpr>,
+        body: Rc<QueryExpr>,
     },
 
-    Predicate(Box<PredicateExpr>),
+    Predicate(Rc<PredicateExpr>),
     Instance(Vec<(String, QueryExpr)>),
 
     BuiltInFunction {
@@ -74,23 +73,18 @@ pub enum QueryExpr {
 #[derive(Debug, Clone)]
 pub enum TransactionType {
     Scan {
-        table_name: String
+        table_name: String,
     },
     Insert {
-        table: String,
-        value: Box<QueryExpr>
-    }
+        table_name: String,
+        value: Rc<QueryExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum TransactionOp {
-    Filter {
-        predicate: Box<PredicateExpr>,
-    },
-    Limit {
-        count: usize,
-        offset: Option<usize>,
-    }
+    Filter { predicate: Rc<PredicateExpr> },
+    Limit { count: usize, offset: Option<usize> },
 }
 
 #[derive(Debug, Clone)]
@@ -108,35 +102,22 @@ pub enum SortDirection {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProjectionExpr {
-    pub expr: QueryExpr,
-    pub alias: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AggregateExpr {
-    pub function: String,
-    pub expr: QueryExpr,
-    pub alias: Option<String>,
-}
-
-#[derive(Debug, Clone)]
 pub enum PredicateExpr {
     Comparison {
         left: QueryExpr,
         op: ComparisonOperator,
         right: QueryExpr,
     },
-    And(Box<PredicateExpr>, Box<PredicateExpr>),
-    Or(Box<PredicateExpr>, Box<PredicateExpr>),
-    Not(Box<PredicateExpr>),
+    And(Rc<PredicateExpr>, Rc<PredicateExpr>),
+    Or(Rc<PredicateExpr>, Rc<PredicateExpr>),
+    Not(Rc<PredicateExpr>),
     IsNull(QueryExpr),
     IsNotNull(QueryExpr),
     In(QueryExpr, Vec<QueryExpr>),
-    Exists(Box<QueryExpr>)
+    Exists(Rc<QueryExpr>),
 }
 
-type SymbolInfo = QueryExpr;
+type SymbolInfo = Rc<QueryExpr>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BinaryOperator {
@@ -160,5 +141,5 @@ pub enum ComparisonOperator {
     Lt,
     LtEq,
     Like,
-    NotLike
+    NotLike,
 }

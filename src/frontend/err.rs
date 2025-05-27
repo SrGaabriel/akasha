@@ -7,4 +7,3 @@ pub enum QueryParsingError {
     #[error("The string starting at position {0} is not terminated")]
     UnterminatedString(usize),
 }
-

@@ -1,131 +1,199 @@
+use crate::page::Page;
+use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::Tuple;
-use futures::FutureExt;
+use futures::{
+    Future, Stream,
+    task::{Context, Poll},
+};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::sync::RwLock;
-use tokio_stream::Stream;
+use tokio::sync::Mutex;
 
 pub struct TableHeap {
     pub file_id: u32,
-    pub buffer_pool: Arc<RwLock<BufferPool>>,
-    pub page_ids: Vec<u32>,
+    pub buffer_pool: Arc<BufferPool>,
+    pub page_ids: Mutex<Vec<u32>>,
 }
 
 impl TableHeap {
-    pub async fn insert_tuple(&mut self, tuple: &Tuple) -> Result<(u32, usize), String> {
-        let mut pool = self.buffer_pool.write().await;
-        for &page_id in &self.page_ids {
-            let frame_arc = pool.get_page(self.file_id, page_id).await.map_err(|e| e.to_string())?;
-            let mut frame = frame_arc.write().await;
-            if let Ok(slot_id) = frame.page.insert_tuple(tuple) {
-                frame.is_dirty = true;
-                return Ok((page_id, slot_id));
-            }
-        }
-        let new_page_id = pool.allocate_new_page(self.file_id).await.map_err(|e| e.to_string())?;
-        self.page_ids.push(new_page_id);
-        let frame_arc = pool.get_page(self.file_id, new_page_id).await.map_err(|e| e.to_string())?;
-        let mut frame = frame_arc.write().await;
-        let slot_id = frame.page.insert_tuple(tuple)?;
-        frame.is_dirty = true;
-        Ok((new_page_id, slot_id))
-    }
-
-    pub async fn get_tuple(&self, page_id: u32, slot_id: usize) -> Option<Tuple> {
-        let mut pool = self.buffer_pool.write().await;
-        let frame_arc = pool.get_page(self.file_id, page_id).await.ok()?;
-        let frame = frame_arc.read().await;
-        frame.page.get_tuple(slot_id)
-    }
-}
-
-pub struct TableHeapIterator {
-    table_heap: Arc<RwLock<TableHeap>>,
-    buffer_pool: Arc<RwLock<BufferPool>>,
-    current_page_index: usize,
-    current_slot_index: usize,
-    current_future: Option<Pin<Box<dyn Future<Output = Option<(Tuple, usize, usize)>> + Send>>>,
-}
-
-impl TableHeapIterator {
-    pub async fn create(table_heap: Arc<RwLock<TableHeap>>) -> Self {
-        let buffer_pool = {
-            let table_heap_lock = table_heap.read().await;
-            table_heap_lock.buffer_pool.clone()
-        };
-        Self {
+    pub fn new(file_id: u32, buffer_pool: Arc<BufferPool>) -> Arc<Self> {
+        Arc::new(TableHeap {
+            file_id,
             buffer_pool,
-            table_heap,
-            current_page_index: 0,
-            current_slot_index: 0,
-            current_future: None,
-        }
+            page_ids: Mutex::new(vec![0]),
+        })
     }
 
-    pub fn reset(&mut self) {
-        self.current_page_index = 0;
-        self.current_slot_index = 0;
-        self.current_future = None;
+    pub async fn from_existing(
+        file_id: u32,
+        buffer_pool: Arc<BufferPool>,
+        io: Arc<IoManager>,
+    ) -> Result<Arc<Self>, String> {
+        let page_count = io
+            .get_page_count(file_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let page_ids = (0..page_count).collect::<Vec<u32>>();
+        Ok(Arc::new(TableHeap {
+            file_id,
+            buffer_pool,
+            page_ids: Mutex::new(page_ids),
+        }))
     }
-}
 
-async fn next_tuple_helper(
-    table_heap: Arc<RwLock<TableHeap>>,
-    buffer_pool: Arc<RwLock<BufferPool>>,
-    mut page_index: usize,
-    mut slot_index: usize,
-) -> Option<(Tuple, usize, usize)> {
-    let table_heap = table_heap.read().await;
-    while page_index < table_heap.page_ids.len() {
-        let page_id = table_heap.page_ids[page_index];
-        let mut pool = buffer_pool.write().await;
-        let frame_arc = pool.get_page(table_heap.file_id, page_id).await.ok()?;
-        let frame = frame_arc.read().await;
-        while slot_index < frame.page.slot_count {
-            let tuple_opt = frame.page.get_tuple(slot_index);
-            if let Some(tuple) = tuple_opt {
-                return Some((tuple, page_index, slot_index + 1));
+    pub async fn insert_tuple(&self, tuple: &Tuple) -> Result<(), String> {
+        let mut pages_guard = self.page_ids.lock().await;
+
+        for &pid in pages_guard.iter() {
+            let ptr = self.buffer_pool.get_page(self.file_id, pid).await;
+            let mut page = unsafe { Page::from_raw(pid, ptr) };
+
+            if page.insert_tuple(tuple).is_ok() {
+                self.buffer_pool
+                    .unpin_and_flush(self.file_id, pid, true)
+                    .await;
+                return Ok(());
+            } else {
+                self.buffer_pool.unpin(self.file_id, pid, false);
             }
-            slot_index += 1;
         }
-        page_index += 1;
-        slot_index = 0;
+
+        let new_pid = pages_guard.len() as u32;
+        let ptr = self.buffer_pool.get_page(self.file_id, new_pid).await;
+        let mut page = unsafe { Page::from_raw(new_pid, ptr) };
+
+        page.init_new();
+        page.insert_tuple(tuple)?;
+        pages_guard.push(new_pid);
+
+        self.buffer_pool
+            .unpin_and_flush(self.file_id, new_pid, true)
+            .await;
+        Ok(())
     }
-    None
 }
 
-impl Stream for TableHeapIterator {
+enum OptimizedTableIteratorState {
+    ReadyToFetchNextPage,
+    FetchingPage {
+        future: Pin<Box<dyn Future<Output = Option<(*mut u8, u32)>> + Send>>,
+    },
+    IteratingPage {
+        page_id: u32,
+        page_ptr: *mut u8,
+        current_slot_idx: usize,
+    },
+    Finished,
+}
+
+pub struct OptimizedTableIterator {
+    heap: Arc<TableHeap>,
+    page_ids_snapshot: Arc<Vec<u32>>,
+    current_page_idx_in_snapshot: usize,
+    state: OptimizedTableIteratorState,
+}
+
+impl OptimizedTableIterator {
+    fn new(heap: Arc<TableHeap>, page_ids_snapshot: Arc<Vec<u32>>) -> Self {
+        OptimizedTableIterator {
+            heap,
+            page_ids_snapshot,
+            current_page_idx_in_snapshot: 0,
+            state: OptimizedTableIteratorState::ReadyToFetchNextPage,
+        }
+    }
+}
+
+impl Stream for OptimizedTableIterator {
     type Item = Tuple;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.current_future.is_none() {
-            let table_heap = self.table_heap.clone();
-            let buffer_pool = self.buffer_pool.clone();
-            let page_index = self.current_page_index;
-            let slot_index = self.current_slot_index;
-            let fut = next_tuple_helper(table_heap, buffer_pool, page_index, slot_index);
-            self.current_future = Some(Box::pin(fut));
-        }
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
 
-        let fut = self.current_future.as_mut().unwrap();
-        match fut.poll_unpin(cx) {
-            Poll::Ready(res) => {
-                self.current_future = None;
-                if let Some((tuple, page_index, slot_index)) = res {
-                    self.current_page_index = page_index;
-                    self.current_slot_index = slot_index;
-                    Poll::Ready(Some(tuple))
-                } else {
-                    Poll::Ready(None)
+        loop {
+            match &mut this.state {
+                OptimizedTableIteratorState::IteratingPage {
+                    page_id,
+                    page_ptr,
+                    current_slot_idx,
+                } => {
+                    let page = unsafe { Page::from_raw(*page_id, *page_ptr) };
+
+                    if let Some(tuple) = page.get_tuple(*current_slot_idx) {
+                        *current_slot_idx += 1;
+                        return Poll::Ready(Some(tuple));
+                    } else {
+                        this.heap
+                            .buffer_pool
+                            .unpin(this.heap.file_id, *page_id, false);
+
+                        this.state = OptimizedTableIteratorState::ReadyToFetchNextPage;
+                        continue;
+                    }
+                }
+
+                OptimizedTableIteratorState::ReadyToFetchNextPage => {
+                    if this.current_page_idx_in_snapshot >= this.page_ids_snapshot.len() {
+                        this.state = OptimizedTableIteratorState::Finished;
+                        return Poll::Ready(None);
+                    }
+
+                    let pid_to_fetch = this.page_ids_snapshot[this.current_page_idx_in_snapshot];
+                    let heap_clone = this.heap.clone();
+
+                    let fetch_future = async move {
+                        let page_ptr = heap_clone
+                            .buffer_pool
+                            .get_page(heap_clone.file_id, pid_to_fetch)
+                            .await;
+                        if page_ptr.is_null() {
+                            None
+                        } else {
+                            Some((page_ptr, pid_to_fetch))
+                        }
+                    };
+
+                    this.state = OptimizedTableIteratorState::FetchingPage {
+                        future: Box::pin(fetch_future),
+                    };
+                    continue;
+                }
+
+                OptimizedTableIteratorState::FetchingPage { future } => {
+                    match future.as_mut().poll(cx) {
+                        Poll::Ready(Some((ptr, pid))) => {
+                            this.state = OptimizedTableIteratorState::IteratingPage {
+                                page_id: pid,
+                                page_ptr: ptr,
+                                current_slot_idx: 0,
+                            };
+                            this.current_page_idx_in_snapshot += 1;
+                            continue;
+                        }
+                        Poll::Ready(None) => {
+                            this.current_page_idx_in_snapshot += 1;
+                            this.state = OptimizedTableIteratorState::ReadyToFetchNextPage;
+                            continue;
+                        }
+                        Poll::Pending => {
+                            return Poll::Pending;
+                        }
+                    }
+                }
+
+                OptimizedTableIteratorState::Finished => {
+                    return Poll::Ready(None);
                 }
             }
-            Poll::Pending => Poll::Pending,
         }
     }
 }
 
-pub async fn scan_table(table_ref: Arc<RwLock<TableHeap>>) -> TableHeapIterator {
-    TableHeapIterator::create(table_ref).await
+pub async fn scan_table(table_ref: Arc<TableHeap>) -> OptimizedTableIterator {
+    let page_ids_guard = table_ref.page_ids.lock().await;
+    let snapshot = Arc::new(page_ids_guard.clone());
+    OptimizedTableIterator::new(table_ref.clone(), snapshot)
 }
+
+unsafe impl Send for OptimizedTableIterator {}

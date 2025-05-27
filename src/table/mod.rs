@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
-use tokio::sync::RwLock;
 use crate::page::Page;
+use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::{DataType, Value};
 use crate::table::heap::TableHeap;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 
 pub mod heap;
 
@@ -26,111 +26,92 @@ pub struct ColumnInfo {
     pub data_type: DataType,
     pub nullable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<Value>
+    pub default: Option<Value>,
 }
 
 #[derive(Clone)]
 pub struct PhysicalTable {
     pub file_id: u32,
     pub name: String,
-    pub heap: Arc<RwLock<TableHeap>>,
-    pub info: TableInfo
+    pub heap: Arc<TableHeap>,
+    pub info: TableInfo,
 }
 
 pub struct TableCatalog {
+    pub buffer_pool: Arc<BufferPool>,
     pub tables: HashMap<String, PhysicalTable>,
 }
 
 impl TableCatalog {
-    pub fn new() -> Self {
-        Self { tables: HashMap::new() }
+    pub fn new(buffer_pool: Arc<BufferPool>) -> Self {
+        TableCatalog {
+            buffer_pool,
+            tables: HashMap::new(),
+        }
     }
 
-    pub async fn create_table(
-        &mut self,
-        name: String,
-        info: TableInfo,
-        buffer_pool: Arc<RwLock<BufferPool>>,
-    ) -> Result<(), String> {
+    pub async fn create_table(&mut self, name: String, info: TableInfo) -> Result<(), String> {
         if self.tables.contains_key(&name) {
-            return Err("Table already exists".to_string());
+            return Err("exists".into());
         }
-
         let file_id = self.tables.len() as u32;
-
-        let pool = buffer_pool.read().await;
-        let new_page_id = pool.frames.len() as u32; // naive strategy
-        let new_page = Page::new(new_page_id);
-        pool.file_accessor.write_page(file_id, &new_page).await.unwrap();
-        drop(pool);
-
-        let heap = Arc::new(RwLock::new(TableHeap {
+        let heap = TableHeap::new(file_id, self.buffer_pool.clone());
+        let ptr = self.buffer_pool.get_page(file_id, 0).await;
+        let mut page = unsafe { Page::from_raw(0, ptr) };
+        page.init_new();
+        self.buffer_pool.unpin_and_flush(file_id, 0, true).await;
+        self.tables.insert(name.clone(), PhysicalTable {
             file_id,
-            buffer_pool: Arc::clone(&buffer_pool),
-            page_ids: vec![new_page_id],
-        }));
-
-        let entry = PhysicalTable {
-            file_id,
-            name: name.clone(),
+            name,
+            heap,
             info,
-            heap: Arc::clone(&heap),
-        };
-
-        self.tables.insert(name, entry);
-
+        });
         Ok(())
     }
 
-    pub fn register_table(&mut self, name: &str, table: PhysicalTable) {
-        self.tables.insert(name.to_string(), table);
+    pub fn get_table(&self, name: &str) -> Option<&PhysicalTable> {
+        self.tables.get(name)
     }
 
-    pub async fn get_table(&self, name: &str) -> Option<PhysicalTable> {
-        self.tables.get(name).cloned()
+    pub async fn persist(&self, base: &str) -> std::io::Result<()> {
+        let meta: Vec<_> = self
+            .tables
+            .values()
+            .map(|t| TableMetadata {
+                name: t.name.clone(),
+                file_id: t.file_id,
+                info: t.info.clone(),
+            })
+            .collect();
+        let s = serde_json::to_string_pretty(&meta)?;
+        let mut f = tokio::fs::File::create(format!("{}/catalog.json", base)).await?;
+        f.write_all(s.as_bytes()).await?;
+        f.flush().await
     }
 
-    pub async fn persist(&self, base_path: String) -> std::io::Result<()> {
-        let tables: Vec<TableMetadata> = self.tables.values().map(|t| TableMetadata {
-            name: t.name.clone(),
-            file_id: t.file_id,
-            info: t.info.clone(),
-        }).collect();
-
-        let json = serde_json::to_string_pretty(&tables).map_err(|e| e.to_string()).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, e)
-        })?;
-        let path = format!("{}/catalog.json", base_path);
-        let mut file = tokio::fs::File::create(path).await?;
-        file.write_all(json.as_bytes()).await?;
-        file.flush().await
-    }
-
-    pub async fn load(base_path: &str, buffer_pool: Arc<RwLock<BufferPool>>) -> Result<Self, String> {
-        let path = format!("{}/catalog.json", base_path);
-        let content = tokio::fs::read_to_string(path).await.map_err(|e| e.to_string())?;
-        let entries: Vec<TableMetadata> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-
-        let mut catalog = TableCatalog::new();
-
+    pub async fn load(
+        base: &str,
+        pool: Arc<BufferPool>,
+        io: Arc<IoManager>,
+    ) -> std::io::Result<Self> {
+        println!("Loading catalog from {}", base);
+        let s = tokio::fs::read_to_string(format!("{}/catalog.json", base)).await?;
+        let entries: Vec<TableMetadata> = serde_json::from_str(&s)?;
+        let mut cat = TableCatalog::new(pool.clone());
         for entry in entries {
-            let heap = Arc::new(RwLock::new(TableHeap {
-                file_id: entry.file_id,
-                buffer_pool: Arc::clone(&buffer_pool),
-                page_ids: vec![0],
-            }));
-
+            let file_id = entry.file_id;
+            let heap = TableHeap::from_existing(file_id, pool.clone(), io.clone())
+                .await
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             let table = PhysicalTable {
-                file_id: entry.file_id,
+                file_id,
                 name: entry.name.clone(),
+                heap,
                 info: entry.info,
-                heap
             };
-
-            catalog.register_table(&entry.name, table);
+            cat.tables.insert(entry.name, table);
         }
-
-        Ok(catalog)
+        Ok(cat)
     }
 }
 
@@ -139,5 +120,5 @@ impl TableCatalog {
 struct TableMetadata {
     name: String,
     file_id: u32,
-    info: TableInfo
+    info: TableInfo,
 }

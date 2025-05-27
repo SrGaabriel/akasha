@@ -49,7 +49,7 @@ impl<'a> Visitor<'a> for PrettyPrinter {
                 self.indent += 1;
                 self.visit(arena, *operand);
                 self.indent -= 1;
-            },
+            }
             Expr::Instance(fields) => {
                 println!("Instance:");
                 self.indent += 1;
@@ -150,5 +150,11 @@ impl<'a> Visitor<'a> for PrettyPrinter {
                 self.indent -= 1;
             }
         }
+    }
+}
+
+impl Default for PrettyPrinter {
+    fn default() -> Self {
+        PrettyPrinter::new()
     }
 }

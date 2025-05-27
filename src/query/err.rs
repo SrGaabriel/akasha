@@ -1,6 +1,6 @@
-use thiserror::Error;
 use crate::frontend::ast::Expr;
 use crate::frontend::lexer::TokenKind;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum TransformError {
@@ -31,7 +31,7 @@ pub enum TransformError {
         name: String,
         expected: usize,
         found: usize,
-    }
+    },
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;
@@ -52,5 +52,5 @@ pub enum QueryError {
     SymbolNotFound(String),
     ExpectedRow,
     ValueAndColumnMismatch(usize, usize),
-    RowCannotBeEmbeddedIntoAnotherRow
+    RowCannotBeEmbeddedIntoAnotherRow,
 }

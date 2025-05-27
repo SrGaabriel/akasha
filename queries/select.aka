@@ -1,3 +1,1 @@
-let
-    oldUsers = scan users |> filter (\u -> u.age > 34)
-in oldUsers -- redundant but just to test the parser
+scan users |> filter (\u -> u.age > 34)

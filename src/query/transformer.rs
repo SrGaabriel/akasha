@@ -3,9 +3,10 @@ use crate::frontend::lexer::TokenKind;
 use crate::page::tuple::Value;
 use crate::query::err::TransformError;
 use crate::query::optimizer::QueryOptimizer;
-use crate::query::{PredicateExpr, QueryExpr, TransactionOp, TransactionType};
 use crate::query::{BinaryOperator, ComparisonOperator};
+use crate::query::{PredicateExpr, QueryExpr, TransactionOp, TransactionType};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 struct BuiltInTransactionFunction {
     name: String,
@@ -35,99 +36,94 @@ impl<'a> AstToQueryTransformer<'a> {
     pub fn new(arena: &'a Arena, optimizer: Box<dyn QueryOptimizer>) -> Self {
         let mut built_in_functions = HashMap::new();
 
-        built_in_functions.insert(
-            "scan".to_string(),
-            BuiltInTransactionFunction {
-                name: "scan".to_string(),
-                arity: 1,
-                apply: |_, args| {
-                    if let QueryExpr::Literal(Value::Text(table_name)) = &args[0] {
-                        Ok(QueryExpr::Transaction {
-                            typ: TransactionType::Scan {
-                                table_name: table_name.clone(),
-                            },
-                            operations: vec![]
-                        })
-                    } else if let QueryExpr::Reference(table_name) = &args[0] {
-                        Ok(QueryExpr::Transaction {
-                            typ: TransactionType::Scan {
-                                table_name: table_name.clone(),
-                            },
-                            operations: vec![]
-                        })
-                    } else {
-                        Err(TransformError::InvalidArgument("scan".to_string()))
-                    }
-                },
+        built_in_functions.insert("scan".to_string(), BuiltInTransactionFunction {
+            name: "scan".to_string(),
+            arity: 1,
+            apply: |_, args| {
+                if let QueryExpr::Literal(Value::Text(table_name)) = &args[0] {
+                    Ok(QueryExpr::Transaction {
+                        typ: TransactionType::Scan {
+                            table_name: table_name.clone(),
+                        },
+                        operations: vec![],
+                    })
+                } else if let QueryExpr::Reference(table_name) = &args[0] {
+                    Ok(QueryExpr::Transaction {
+                        typ: TransactionType::Scan {
+                            table_name: table_name.clone(),
+                        },
+                        operations: vec![],
+                    })
+                } else {
+                    Err(TransformError::InvalidArgument("scan".to_string()))
+                }
             },
-        );
+        });
 
-        built_in_functions.insert(
-            "filter".to_string(),
-            BuiltInTransactionFunction {
-                name: "filter".to_string(),
-                arity: 2,
-                apply: |transformer, mut args| {
-                    if let QueryExpr::Lambda { params, body, .. } = &args[0] {
-                        if params.len() == 1 {
-                            transformer.push_scope();
-                            transformer.set_row_variable(&params[0]);
+        built_in_functions.insert("filter".to_string(), BuiltInTransactionFunction {
+            name: "filter".to_string(),
+            arity: 2,
+            apply: |transformer, mut args| {
+                if let QueryExpr::Lambda { params, body, .. } = &args[0] {
+                    if params.len() == 1 {
+                        transformer.push_scope();
+                        transformer.set_row_variable(&params[0]);
 
-                            let predicate = match transformer.transform_to_predicate(*body) {
-                                Ok(pred) => pred,
-                                Err(e) => return Err(e),
-                            };
+                        let predicate = match transformer.transform_to_predicate(*body) {
+                            Ok(pred) => pred,
+                            Err(e) => return Err(e),
+                        };
 
-                            transformer.pop_scope();
-                            transformer.clear_row_variable();
+                        transformer.pop_scope();
+                        transformer.clear_row_variable();
 
-                            let input = args.get_mut(1).ok_or_else(|| TransformError::InvalidArgument("filter".to_string()))?;
-                            match input {
-                                QueryExpr::Transaction { operations, .. } => {
-                                    operations.push(TransactionOp::Filter {
-                                        predicate: Box::new(predicate),
-                                    });
-                                }
-                                _ => return Err(TransformError::InvalidArgument("filter".to_string())),
+                        let input = args
+                            .get_mut(1)
+                            .ok_or_else(|| TransformError::InvalidArgument("filter".to_string()))?;
+                        match input {
+                            QueryExpr::Transaction { operations, .. } => {
+                                operations.push(TransactionOp::Filter {
+                                    predicate: Rc::new(predicate),
+                                });
                             }
-                            Ok(input.clone())
-                        } else {
-                            Err(TransformError::InvalidLambdaParams)
+                            _ => return Err(TransformError::InvalidArgument("filter".to_string())),
                         }
+                        Ok(input.clone())
                     } else {
-                        Err(TransformError::ExpectedLambda)
+                        Err(TransformError::InvalidLambdaParams)
                     }
-                },
+                } else {
+                    Err(TransformError::ExpectedLambda)
+                }
             },
-        );
+        });
 
-        built_in_functions.insert(
-            "insert".to_string(),
-            BuiltInTransactionFunction {
-                name: "insert".to_string(),
-                arity: 2,
-                apply: |_, args| {
-                    if let QueryExpr::Reference(table_name) = &args[0] {
-                        let value = args[1].clone();
+        built_in_functions.insert("insert".to_string(), BuiltInTransactionFunction {
+            name: "insert".to_string(),
+            arity: 2,
+            apply: |_, args| {
+                if let QueryExpr::Reference(table_name) = &args[0] {
+                    let value = args[1].clone();
 
-                        Ok(QueryExpr::Transaction {
-                            typ: TransactionType::Insert {
-                                table: table_name.clone(),
-                                value: Box::new(value)
-                            },
-                            operations: vec![]
-                        })
-                    } else {
-                        Err(TransformError::InvalidArgument("insert".to_string()))
-                    }
-                },
+                    Ok(QueryExpr::Transaction {
+                        typ: TransactionType::Insert {
+                            table_name: table_name.clone(),
+                            value: Rc::new(value),
+                        },
+                        operations: vec![],
+                    })
+                } else {
+                    Err(TransformError::InvalidArgument("insert".to_string()))
+                }
             },
-        );
+        });
 
         Self {
             arena,
             optimizer,
-            current_scope: vec![SymbolTable { symbols: HashMap::new() }],
+            current_scope: vec![SymbolTable {
+                symbols: HashMap::new(),
+            }],
             current_row_variable: None,
             built_in_functions,
         }
@@ -145,10 +141,13 @@ impl<'a> AstToQueryTransformer<'a> {
                 self.resolve_reference(&name)
             }
             Expr::Lambda { params, body } => {
-                let param_names = params.iter().map(|&p| self.arena.resolve_str(p).to_string()).collect();
+                let param_names = params
+                    .iter()
+                    .map(|&p| self.arena.resolve_str(p).to_string())
+                    .collect();
                 Ok(QueryExpr::Lambda {
                     params: param_names,
-                    body: *body
+                    body: *body,
                 })
             }
             Expr::FunctionCall { func, args } => {
@@ -158,8 +157,8 @@ impl<'a> AstToQueryTransformer<'a> {
                 if let QueryExpr::Reference(op_name) = &func_expr {
                     if op_name == "|>" && arg_exprs.len() == 2 {
                         return Ok(QueryExpr::Bind {
-                            input: Box::new(arg_exprs[0].clone()),
-                            func: Box::new(arg_exprs[1].clone()),
+                            input: Rc::new(arg_exprs[0].clone()),
+                            func: Rc::new(arg_exprs[1].clone()),
                         });
                     }
                 }
@@ -181,7 +180,7 @@ impl<'a> AstToQueryTransformer<'a> {
                         }
                     }
                     _ => Ok(QueryExpr::Apply {
-                        func: Box::new(func_expr),
+                        func: Rc::new(func_expr),
                         args: arg_exprs,
                     }),
                 }
@@ -195,8 +194,8 @@ impl<'a> AstToQueryTransformer<'a> {
                 self.pop_scope();
                 Ok(QueryExpr::Binding {
                     name: name_str,
-                    value: Box::new(value_expr),
-                    body: Box::new(body_expr),
+                    value: Rc::new(value_expr),
+                    body: Rc::new(body_expr),
                 })
             }
             Expr::BinaryOp { op, left, right } => {
@@ -213,9 +212,9 @@ impl<'a> AstToQueryTransformer<'a> {
                 };
 
                 Ok(QueryExpr::BinaryOp {
-                    left: Box::new(left_expr),
+                    left: Rc::new(left_expr),
                     op: operator,
-                    right: Box::new(right_expr),
+                    right: Rc::new(right_expr),
                 })
             }
             Expr::Number(num_str) => {
@@ -232,9 +231,7 @@ impl<'a> AstToQueryTransformer<'a> {
                 let string_value = self.arena.resolve_str(*str_id).to_string();
                 Ok(QueryExpr::Literal(Value::Text(string_value)))
             }
-            Expr::Bool(value) => {
-                Ok(QueryExpr::Literal(Value::Boolean(*value)))
-            }
+            Expr::Bool(value) => Ok(QueryExpr::Literal(Value::Boolean(*value))),
             Expr::Instance(values) => {
                 let mut fields = Vec::new();
                 for (name_id, value) in values {
@@ -265,7 +262,10 @@ impl<'a> AstToQueryTransformer<'a> {
         }
     }
 
-    fn transform_args(&mut self, args_nodes: Vec<NodeId>) -> Result<Vec<QueryExpr>, TransformError> {
+    fn transform_args(
+        &mut self,
+        args_nodes: Vec<NodeId>,
+    ) -> Result<Vec<QueryExpr>, TransformError> {
         let mut args = Vec::new();
         for arg_node in args_nodes {
             let arg_expr = self.transform_node(arg_node)?;
@@ -309,12 +309,12 @@ impl<'a> AstToQueryTransformer<'a> {
                     TokenKind::And => {
                         let left_pred = self.transform_to_predicate(*left)?;
                         let right_pred = self.transform_to_predicate(*right)?;
-                        return Ok(PredicateExpr::And(Box::new(left_pred), Box::new(right_pred)));
+                        return Ok(PredicateExpr::And(Rc::new(left_pred), Rc::new(right_pred)));
                     }
                     TokenKind::Or => {
                         let left_pred = self.transform_to_predicate(*left)?;
                         let right_pred = self.transform_to_predicate(*right)?;
-                        return Ok(PredicateExpr::Or(Box::new(left_pred), Box::new(right_pred)));
+                        return Ok(PredicateExpr::Or(Rc::new(left_pred), Rc::new(right_pred)));
                     }
                     _ => return Err(TransformError::UnsupportedOperator(op.clone())),
                 };
@@ -328,7 +328,7 @@ impl<'a> AstToQueryTransformer<'a> {
             Expr::UnaryOp { op, operand } => {
                 if *op == TokenKind::Not {
                     let pred = self.transform_to_predicate(*operand)?;
-                    Ok(PredicateExpr::Not(Box::new(pred)))
+                    Ok(PredicateExpr::Not(Rc::new(pred)))
                 } else {
                     Err(TransformError::UnsupportedOperator(op.clone()))
                 }
@@ -338,7 +338,9 @@ impl<'a> AstToQueryTransformer<'a> {
     }
 
     fn push_scope(&mut self) {
-        self.current_scope.push(SymbolTable { symbols: HashMap::new() });
+        self.current_scope.push(SymbolTable {
+            symbols: HashMap::new(),
+        });
     }
 
     fn pop_scope(&mut self) {

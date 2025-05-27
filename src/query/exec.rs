@@ -1,71 +1,63 @@
 use crate::page::tuple::{Tuple, Value};
-use crate::query::op::TableOp;
 use crate::query::Transaction;
+use crate::query::op::TableOp;
 use crate::table::heap::scan_table;
 use crate::table::{ColumnInfo, TableCatalog, TableInfo};
 use futures::Stream;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
 
-// todo: have actual errors
-
 pub struct QueryExecutor {
-    catalog: Arc<RwLock<TableCatalog>>
+    catalog: Arc<TableCatalog>,
 }
 
 pub enum PlanResult {
     Stream(Vec<TableOp>),
     ModifyData {
         ops: Vec<TableOp>,
-        returning: Option<Vec<usize>>
+        returning: Option<Vec<usize>>,
     },
 }
 
 impl QueryExecutor {
-    pub fn new(catalog: Arc<RwLock<TableCatalog>>) -> Self {
-        Self {
-            catalog
-        }
+    pub fn new(catalog: Arc<TableCatalog>) -> Self {
+        Self { catalog }
     }
 
     pub async fn execute(
         &self,
-        transaction: Transaction,
+        transaction: &Transaction,
     ) -> Result<Pin<Box<dyn Stream<Item = Tuple> + Send>>, String> {
         match transaction {
             Transaction::Select { table, ops } => {
                 let physical_table = self
                     .catalog
-                    .read()
-                    .await
                     .get_table(&table)
-                    .await
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
                 let heap = physical_table.heap.clone();
                 let base_stream = scan_table(heap).await;
                 Ok(Self::apply_ops(base_stream, ops))
             }
-            Transaction::Insert { table, values, ops, returning } => {
+            Transaction::Insert {
+                table,
+                values,
+                ops,
+                returning,
+            } => {
                 let physical_table = self
                     .catalog
-                    .read()
-                    .await
                     .get_table(&table)
-                    .await
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
-                let tuple = Self::build_tuple(&physical_table.info, values)?;
+                let tuple = Self::build_tuple(&physical_table.info, values.clone())?;
                 let heap = physical_table.heap.clone();
-                heap.write()
-                    .await
-                    .insert_tuple(&tuple)
+                heap.insert_tuple(&tuple)
                     .await
                     .map_err(|e| format!("Insert failed: {}", e))?;
 
-                if returning {
+                if *returning {
                     Ok(Box::pin(futures::stream::iter(vec![])))
                 } else {
                     let base_stream = Box::pin(futures::stream::iter(vec![tuple]));
@@ -75,10 +67,7 @@ impl QueryExecutor {
         }
     }
 
-    fn build_tuple(
-        table_info: &TableInfo,
-        values: Vec<(String, Value)>
-    ) -> Result<Tuple, String> {
+    fn build_tuple(table_info: &TableInfo, values: Vec<(String, Value)>) -> Result<Tuple, String> {
         let value_map: HashMap<String, Value> = values.into_iter().collect();
         let columns: Vec<(String, ColumnInfo)> = table_info
             .columns
@@ -101,17 +90,20 @@ impl QueryExecutor {
                 ));
             }
         }
-        Ok(Tuple { values: tuple_values })
+        Ok(Tuple {
+            values: tuple_values,
+        })
     }
 
     fn apply_ops<S>(
         stream: S,
-        ops: Vec<TableOp>,
+        ops: &Vec<TableOp>,
     ) -> Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>
     where
         S: Stream<Item = Tuple> + Send + 'static,
     {
-        let mut result_stream = Box::pin(stream) as Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
+        let mut result_stream =
+            Box::pin(stream) as Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
         for op in ops {
             result_stream = op.apply(result_stream);
         }
