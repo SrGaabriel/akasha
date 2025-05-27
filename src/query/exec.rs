@@ -90,9 +90,7 @@ impl QueryExecutor {
                 ));
             }
         }
-        Ok(Tuple {
-            values: tuple_values,
-        })
+        Ok(Tuple(tuple_values))
     }
 
     fn apply_ops<S>(

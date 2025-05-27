@@ -1,4 +1,4 @@
-use crate::page::PAGE_SIZE;
+use crate::page::{Page, PAGE_SIZE};
 use crate::page::io::IoManager;
 use std::cell::UnsafeCell;
 use std::sync::Arc;
@@ -190,9 +190,14 @@ impl BufferPool {
         (file_id as usize ^ page_id as usize) & (SHARD_COUNT - 1)
     }
 
-    pub async fn get_page(&self, file_id: u32, page_id: u32) -> *mut u8 {
+    pub async fn get_page_ptr(&self, file_id: u32, page_id: u32) -> *mut u8 {
         let s = self.pick_shard(file_id, page_id);
         self.shards[s].get_page(file_id, page_id).await
+    }
+
+    pub async fn get_page_raw(&self, file_id: u32, page_id: u32) -> Page {
+        let ptr = self.get_page_ptr(file_id, page_id).await;
+        unsafe { Page::from_raw(page_id, ptr) }
     }
 
     pub fn unpin(&self, file_id: u32, page_id: u32, is_dirty: bool) {

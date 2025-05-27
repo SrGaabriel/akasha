@@ -1,5 +1,4 @@
 use crate::frontend::lexer::TokenKind;
-use crate::frontend::print::PrettyPrinter;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::hash::Hash;

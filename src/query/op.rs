@@ -34,8 +34,8 @@ impl TableOp {
                 operator,
                 value,
             } => {
-                let filter_fn = move |tuple: &Tuple| {
-                    let column_value = &tuple.values[column_index];
+                let filter_fn = move |Tuple(tuple_values): &Tuple| {
+                    let column_value = &tuple_values[column_index];
                     futures::future::ready(match (column_value, &operator, &value) {
                         (a, ComparisonOperator::Eq, b) => a == b,
                         (a, ComparisonOperator::Neq, b) => a != b,
@@ -64,14 +64,12 @@ impl TableOp {
             TableOp::PredicativeFilter(filter_fn) => {
                 Box::pin(stream.filter(move |tuple| futures::future::ready(filter_fn(tuple))))
             }
-            TableOp::Project(indices) => Box::pin(stream.map(move |tuple| {
+            TableOp::Project(indices) => Box::pin(stream.map(move |Tuple(tuple_values)| {
                 let projected_values = indices
                     .iter()
-                    .map(|&idx| tuple.values[idx].clone())
+                    .map(|&idx| tuple_values[idx].clone())
                     .collect();
-                Tuple {
-                    values: projected_values,
-                }
+                Tuple(projected_values)
             })),
             TableOp::Map(map_fn) => Box::pin(stream.map(move |tuple| map_fn(&tuple))),
             TableOp::Limit { count, offset } => Box::pin(stream.skip(offset).take(count)), // todo: fix

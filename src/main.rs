@@ -72,35 +72,37 @@ impl QueryEngine {
     async fn new(debug_mode: bool) -> Result<Self, Box<dyn std::error::Error>> {
         let init_timer = DebugTimer::new("Database initialization", debug_mode);
 
-        let home_dir = "db".to_string();
-        let file_io = Arc::new(FileSystemManager::new(home_dir.clone()));
+        let file_io = Arc::new(FileSystemManager::new("database".to_string()));
         file_io.create_home().await?;
 
         let io = Arc::new(IoManager::new(file_io.clone()));
         let buffer_pool = BufferPool::new(io.clone());
 
-        let catalog = match TableCatalog::load("db", Arc::clone(&buffer_pool), io).await {
+        let catalog = match TableCatalog::load(io.clone(), buffer_pool.clone()).await {
             Ok(cat) => {
                 println!("Loaded catalog with {} tables", cat.tables.len());
                 cat
             }
             Err(err) => {
                 eprintln!("Error loading catalog: {}", err);
-                let mut cat = TableCatalog::new(buffer_pool.clone());
+                let mut cat = TableCatalog::create_blank(io.clone(), buffer_pool.clone()).await;
                 let mut columns = HashMap::new();
                 columns.insert("name".to_string(), ColumnInfo {
+                    id: 0,
+                    name: "name".to_string(),
                     data_type: page::tuple::DataType::Int,
                     default: None,
                     nullable: false,
                 });
                 columns.insert("age".to_string(), ColumnInfo {
+                    id: 1,
+                    name: "age".to_string(),
                     data_type: page::tuple::DataType::Int,
                     default: None,
                     nullable: false,
                 });
                 cat.create_table("users".to_string(), TableInfo { columns })
                     .await?;
-                cat.persist(&*home_dir).await?;
                 cat
             }
         };

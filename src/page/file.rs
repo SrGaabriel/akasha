@@ -22,6 +22,15 @@ impl RelationFile {
         Ok(RelationFile { id, file })
     }
 
+    pub async fn open_existing(id: u32, path: &str) -> std::io::Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .await?;
+        Ok(RelationFile { id, file })
+    }
+
     pub async fn read_page_into_buffer<'a>(
         &mut self,
         page_index: u32,

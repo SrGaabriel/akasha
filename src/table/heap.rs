@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use crate::page::Page;
 use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
@@ -31,7 +32,7 @@ impl TableHeap {
         io: Arc<IoManager>,
     ) -> Result<Arc<Self>, String> {
         let page_count = io
-            .get_page_count(file_id)
+            .try_get_page_count(file_id)
             .await
             .map_err(|e| e.to_string())?;
         let page_ids = (0..page_count).collect::<Vec<u32>>();
@@ -42,11 +43,23 @@ impl TableHeap {
         }))
     }
 
+    pub async fn init(&self) {
+        let ptr = self.buffer_pool.get_page_ptr(self.file_id, 0).await;
+        let mut page = unsafe { Page::from_raw(0, ptr) };
+        page.init_new();
+        self.buffer_pool.unpin_and_flush(self.file_id, 0, true).await;
+    }
+
+    pub async fn get_tuple(&self, page_id: u32, slot_id: usize) -> Option<Tuple> {
+        let page = self.buffer_pool.get_page_raw(self.file_id, page_id).await;
+        page.get_tuple(slot_id)
+    }
+
     pub async fn insert_tuple(&self, tuple: &Tuple) -> Result<(), String> {
         let mut pages_guard = self.page_ids.lock().await;
 
         for &pid in pages_guard.iter() {
-            let ptr = self.buffer_pool.get_page(self.file_id, pid).await;
+            let ptr = self.buffer_pool.get_page_ptr(self.file_id, pid).await;
             let mut page = unsafe { Page::from_raw(pid, ptr) };
 
             if page.insert_tuple(tuple).is_ok() {
@@ -60,7 +73,7 @@ impl TableHeap {
         }
 
         let new_pid = pages_guard.len() as u32;
-        let ptr = self.buffer_pool.get_page(self.file_id, new_pid).await;
+        let ptr = self.buffer_pool.get_page_ptr(self.file_id, new_pid).await;
         let mut page = unsafe { Page::from_raw(new_pid, ptr) };
 
         page.init_new();
@@ -145,7 +158,7 @@ impl Stream for OptimizedTableIterator {
                     let fetch_future = async move {
                         let page_ptr = heap_clone
                             .buffer_pool
-                            .get_page(heap_clone.file_id, pid_to_fetch)
+                            .get_page_ptr(heap_clone.file_id, pid_to_fetch)
                             .await;
                         if page_ptr.is_null() {
                             None
@@ -197,3 +210,9 @@ pub async fn scan_table(table_ref: Arc<TableHeap>) -> OptimizedTableIterator {
 }
 
 unsafe impl Send for OptimizedTableIterator {}
+
+impl Debug for TableHeap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TableHeap(file_id: {})", self.file_id)
+    }
+}

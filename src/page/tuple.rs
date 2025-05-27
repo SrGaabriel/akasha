@@ -2,15 +2,13 @@ use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
-pub struct Tuple {
-    pub values: Vec<Value>,
-}
+pub struct Tuple(pub Vec<Value>);
 
 impl Tuple {
     pub fn to_bytes(&self) -> Vec<u8> {
-        let total_size: usize = self.values.iter().map(Value::get_size).sum();
+        let total_size: usize = self.0.iter().map(Value::get_size).sum();
         let mut bytes = Vec::with_capacity(total_size);
-        for value in &self.values {
+        for value in &self.0 {
             value.to_bytes_into(&mut bytes);
         }
         bytes
@@ -24,7 +22,7 @@ impl Tuple {
             values.push(val);
             offset += size;
         }
-        Self { values }
+        Self(values)
     }
 }
 
@@ -40,6 +38,7 @@ pub enum Value {
     Date(chrono::NaiveDate),
     DateTime(chrono::NaiveDateTime),
     Blob(Vec<u8>),
+    Byte(u8)
 }
 
 impl Value {
@@ -88,6 +87,10 @@ impl Value {
                 buf.extend_from_slice(&(b.len() as u16).to_le_bytes());
                 buf.extend_from_slice(b);
             }
+            Value::Byte(b) => {
+                buf.push(self.id());
+                buf.push(*b);
+            }
         }
     }
 
@@ -135,6 +138,7 @@ impl Value {
                 let b = data[3..3 + len].to_vec();
                 (Value::Blob(b), 3 + len)
             }
+            0x0A => (Value::Byte(data[1]), 2),
             _ => panic!("Unknown value type: {}", data[0]),
         }
     }
@@ -151,6 +155,7 @@ impl Value {
             Value::Null => 1,
             Value::Long(_) => 9,
             Value::Double(_) => 9,
+            Value::Byte(_) => 2,
         }
     }
 
@@ -166,6 +171,39 @@ impl Value {
             Value::Date(_) => 0x07,
             Value::DateTime(_) => 0x08,
             Value::Blob(_) => 0x09,
+            Value::Byte(_) => 0x0A,
+        }
+    }
+
+    pub fn as_string(&self) -> Option<String> {
+        if let Value::Text(s) = self {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn as_int(&self) -> Option<i32> {
+        if let Value::Int(i) = self {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        if let Value::Boolean(b) = self {
+            Some(*b)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_byte(&self) -> Option<u8> {
+        if let Value::Byte(b) = self {
+            Some(*b)
+        } else {
+            None
         }
     }
 }
@@ -182,4 +220,40 @@ pub enum DataType {
     Date,     // 0x07
     DateTime, // 0x08
     Blob,     // 0x09
+    Byte,     // 0x0A
+}
+
+impl DataType {
+    pub fn from_id(id: u8) -> Option<Self> {
+        match id {
+            0x00 => Some(DataType::Null),
+            0x01 => Some(DataType::Int),
+            0x02 => Some(DataType::Long),
+            0x03 => Some(DataType::Float),
+            0x04 => Some(DataType::Double),
+            0x05 => Some(DataType::Text),
+            0x06 => Some(DataType::Boolean),
+            0x07 => Some(DataType::Date),
+            0x08 => Some(DataType::DateTime),
+            0x09 => Some(DataType::Blob),
+            0x0A => Some(DataType::Byte),
+            _ => None,
+        }
+    }
+
+    pub fn id(&self) -> u8 {
+        match self {
+            DataType::Null => 0x00,
+            DataType::Int => 0x01,
+            DataType::Long => 0x02,
+            DataType::Float => 0x03,
+            DataType::Double => 0x04,
+            DataType::Text => 0x05,
+            DataType::Boolean => 0x06,
+            DataType::Date => 0x07,
+            DataType::DateTime => 0x08,
+            DataType::Blob => 0x09,
+            DataType::Byte => 0x0A,
+        }
+    }
 }

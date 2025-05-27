@@ -21,6 +21,11 @@ impl FileSystemManager {
         let path = format!("{}/ak{}.{}", self.home_dir, file_id, EXTENSION);
         RelationFile::open(file_id, &path).await
     }
+
+    pub async fn open_existing_page_file(&self, file_id: u32) -> std::io::Result<RelationFile> {
+        let path = format!("{}/ak{}.{}", self.home_dir, file_id, EXTENSION);
+        RelationFile::open_existing(file_id, &path).await
+    }
 }
 
 struct WriteJob {
@@ -79,6 +84,14 @@ impl IoManager {
         let pf = map
             .entry(file_id)
             .or_insert(self.inner.open_page_file(file_id).await?);
+        pf.get_page_count().await
+    }
+
+    pub async fn try_get_page_count(&self, file_id: u32) -> std::io::Result<u32> {
+        let mut map = self.open_files.lock().await;
+        let pf = map
+            .entry(file_id)
+            .or_insert(self.inner.open_existing_page_file(file_id).await?);
         pf.get_page_count().await
     }
 
