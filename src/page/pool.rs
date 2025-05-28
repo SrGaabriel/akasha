@@ -212,13 +212,12 @@ impl BufferPool {
         shard.flush_page(file_id, page_id).await;
     }
 
-    pub async fn flush(&self) -> std::io::Result<()> {
+    pub async fn flush(&self) {
         let mut futures = Vec::new();
         for shard_arc in &self.shards {
             futures.push(shard_arc.flush_all_dirty_pages_in_shard());
         }
         futures::future::join_all(futures).await;
-        Ok(())
     }
 }
 

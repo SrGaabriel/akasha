@@ -6,6 +6,7 @@ use crate::page::tuple::{DataType, Tuple, Value};
 use crate::table::heap::{scan_table, TableHeap};
 use crate::table::{ColumnInfo, PhysicalTable, TableInfo};
 use futures::StreamExt;
+use crate::page::err::DbResult;
 
 pub const RELATIONS_TABLE_ID: u32 = 0;
 pub const COLUMNS_TABLE_ID: u32 = 1;
@@ -28,7 +29,7 @@ pub struct InternalTableInterface {
 }
 
 impl InternalTableInterface {
-    pub async fn from_disk(pool: Arc<BufferPool>, io: Arc<IoManager>) -> std::io::Result<Self> {
+    pub async fn from_disk(pool: Arc<BufferPool>, io: Arc<IoManager>) -> DbResult<Self> {
         let relations_table = load_table_heap(RELATIONS_TABLE_ID, io.clone(), pool.clone()).await?;
         let columns_table = load_table_heap(COLUMNS_TABLE_ID, io.clone(), pool.clone()).await?;
 
@@ -54,7 +55,7 @@ impl InternalTableInterface {
         interface.save_table(columns_table, "akasha.columns".to_string(), columns_table_columns()).await.expect("Failed to save columns table");
     }
 
-    pub async fn load_tables(&self) -> std::io::Result<HashMap<String, PhysicalTable>> {
+    pub async fn load_tables(&self) -> DbResult<HashMap<String, PhysicalTable>> {
         let table_iterator = scan_table(self.relations_table.clone()).await;
         let column_iterator = scan_table(self.columns_table.clone()).await;
 
@@ -114,7 +115,7 @@ impl InternalTableInterface {
         Ok(tables)
     }
 
-    pub async fn save_table(&self, heap: Arc<TableHeap>, name: String, columns: HashMap<String, ColumnInfo>) -> std::io::Result<PhysicalTable> {
+    pub async fn save_table(&self, heap: Arc<TableHeap>, name: String, columns: HashMap<String, ColumnInfo>) -> DbResult<PhysicalTable> {
         heap.init().await;
         let mut column_rows: Vec<Tuple> = Vec::new();
         for column in columns.values() {
@@ -147,15 +148,13 @@ impl InternalTableInterface {
         })
     }
 
-    async fn load_table_heap(&self, file_id: u32) -> std::io::Result<Arc<TableHeap>> {
+    async fn load_table_heap(&self, file_id: u32) -> DbResult<Arc<TableHeap>> {
         load_table_heap(file_id, self.io.clone(), self.pool.clone()).await
     }
 }
 
-async fn load_table_heap(file_id: u32, io: Arc<IoManager>, buffer_pool: Arc<BufferPool>) -> std::io::Result<Arc<TableHeap>> {
-    TableHeap::from_existing(file_id, buffer_pool, io)
-        .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+async fn load_table_heap(file_id: u32, io: Arc<IoManager>, buffer_pool: Arc<BufferPool>) -> DbResult<Arc<TableHeap>> {
+    TableHeap::from_existing(file_id, buffer_pool, io).await
 }
 
 fn relations_table_columns() -> HashMap<String, ColumnInfo> {

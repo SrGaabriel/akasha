@@ -10,6 +10,7 @@ use futures::{
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::page::err::DbResult;
 
 pub struct TableHeap {
     pub file_id: u32,
@@ -30,11 +31,10 @@ impl TableHeap {
         file_id: u32,
         buffer_pool: Arc<BufferPool>,
         io: Arc<IoManager>,
-    ) -> Result<Arc<Self>, String> {
+    ) -> DbResult<Arc<Self>> {
         let page_count = io
             .try_get_page_count(file_id)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         let page_ids = (0..page_count).collect::<Vec<u32>>();
         Ok(Arc::new(TableHeap {
             file_id,

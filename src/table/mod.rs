@@ -5,6 +5,7 @@ use crate::table::heap::TableHeap;
 use crate::table::internal::InternalTableInterface;
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::page::err::{DbInternalError, DbResult};
 
 pub mod heap;
 mod internal;
@@ -62,12 +63,9 @@ impl TableCatalog {
             .expect("Failed to load catalog after creation")
     }
 
-    pub async fn create_table(&mut self, name: String, info: TableInfo) -> std::io::Result<()> {
+    pub async fn create_table(&mut self, name: String, info: TableInfo) -> DbResult<()> {
         if self.tables.contains_key(&name) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!("Table '{}' already exists", name),
-            ));
+            return Err(DbInternalError::TableAlreadyExists(name));
         }
         let file_id = self.tables.len() as u32;
         let heap = TableHeap::new(file_id, self.buffer_pool.clone());
@@ -84,7 +82,7 @@ impl TableCatalog {
     pub async fn load(
         io: Arc<IoManager>,
         pool: Arc<BufferPool>,
-    ) -> std::io::Result<Self> {
+    ) -> DbResult<Self> {
         let internals = InternalTableInterface::from_disk(pool.clone(), io).await?;
         let tables = internals.load_tables().await?;
         let mut catalog = TableCatalog::new(internals, pool);

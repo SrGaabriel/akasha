@@ -2,6 +2,7 @@ use crate::page::{PAGE_SIZE, Page};
 use std::io::SeekFrom;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use crate::page::err::DbResult;
 
 pub const EXTENSION: &str = "record";
 
@@ -12,7 +13,7 @@ pub struct RelationFile {
 }
 
 impl RelationFile {
-    pub async fn open(id: u32, path: &str) -> std::io::Result<Self> {
+    pub async fn open(id: u32, path: &str) -> DbResult<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -22,7 +23,7 @@ impl RelationFile {
         Ok(RelationFile { id, file })
     }
 
-    pub async fn open_existing(id: u32, path: &str) -> std::io::Result<Self> {
+    pub async fn open_existing(id: u32, path: &str) -> DbResult<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -35,14 +36,14 @@ impl RelationFile {
         &mut self,
         page_index: u32,
         buffer: &'a mut [u8; PAGE_SIZE],
-    ) -> std::io::Result<Page<'a>> {
+    ) -> DbResult<Page<'a>> {
         let offset = (page_index as u64) * (PAGE_SIZE as u64);
         self.file.seek(SeekFrom::Start(offset)).await?;
         self.file.read_exact(buffer).await?;
         Ok(Page::from_bytes(page_index, buffer))
     }
 
-    pub async fn write_page(&mut self, page: &Page<'_>) -> std::io::Result<()> {
+    pub async fn write_page(&mut self, page: &Page<'_>) -> DbResult<()> {
         let offset = (page.index as u64) * (PAGE_SIZE as u64);
         self.file.seek(SeekFrom::Start(offset)).await?;
         self.file.write_all(&page.to_bytes()).await?;
@@ -50,7 +51,7 @@ impl RelationFile {
         Ok(())
     }
 
-    pub async fn write_page_data(&mut self, page_id: u32, data: Vec<u8>) -> std::io::Result<()> {
+    pub async fn write_page_data(&mut self, page_id: u32, data: Vec<u8>) -> DbResult<()> {
         assert_eq!(data.len(), PAGE_SIZE, "data must be exactly one page");
         let offset = (page_id as u64) * (PAGE_SIZE as u64);
         self.file.seek(SeekFrom::Start(offset)).await?;
@@ -59,7 +60,7 @@ impl RelationFile {
         Ok(())
     }
 
-    pub async fn get_page_count(&self) -> std::io::Result<u32> {
+    pub async fn get_page_count(&self) -> DbResult<u32> {
         let size = self.file.metadata().await?.len();
         Ok((size / PAGE_SIZE as u64) as u32)
     }

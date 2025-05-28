@@ -3,6 +3,7 @@ use crate::page::file::{EXTENSION, RelationFile};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
+use crate::page::err::DbResult;
 
 pub struct FileSystemManager {
     home_dir: String,
@@ -17,12 +18,12 @@ impl FileSystemManager {
         tokio::fs::create_dir_all(&self.home_dir).await
     }
 
-    pub async fn open_page_file(&self, file_id: u32) -> std::io::Result<RelationFile> {
+    pub async fn open_page_file(&self, file_id: u32) -> DbResult<RelationFile> {
         let path = format!("{}/ak{}.{}", self.home_dir, file_id, EXTENSION);
         RelationFile::open(file_id, &path).await
     }
 
-    pub async fn open_existing_page_file(&self, file_id: u32) -> std::io::Result<RelationFile> {
+    pub async fn open_existing_page_file(&self, file_id: u32) -> DbResult<RelationFile> {
         let path = format!("{}/ak{}.{}", self.home_dir, file_id, EXTENSION);
         RelationFile::open_existing(file_id, &path).await
     }
@@ -65,7 +66,7 @@ impl IoManager {
         file_id: u32,
         page_id: u32,
         buf: &mut [u8; PAGE_SIZE],
-    ) -> std::io::Result<()> {
+    ) -> DbResult<()> {
         let mut map = self.open_files.lock().await;
         let pf = match map.get_mut(&file_id) {
             Some(pf) => pf,
@@ -79,7 +80,7 @@ impl IoManager {
         Ok(())
     }
 
-    pub async fn get_page_count(&self, file_id: u32) -> std::io::Result<u32> {
+    pub async fn get_page_count(&self, file_id: u32) -> DbResult<u32> {
         let mut map = self.open_files.lock().await;
         let pf = map
             .entry(file_id)
@@ -87,7 +88,7 @@ impl IoManager {
         pf.get_page_count().await
     }
 
-    pub async fn try_get_page_count(&self, file_id: u32) -> std::io::Result<u32> {
+    pub async fn try_get_page_count(&self, file_id: u32) -> DbResult<u32> {
         let mut map = self.open_files.lock().await;
         let pf = map
             .entry(file_id)

@@ -36,21 +36,18 @@ pub enum TransformError {
 
 pub type QueryResult<T> = Result<T, QueryError>;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum QueryError {
+    #[error("Table '{0}' not found")]
     TableNotFound(String),
-    InvalidSchema(String),
-    InvalidTuple(String),
-    InvalidFilter(String),
-    InvalidOperation(String),
-    IoError(std::io::Error),
-    ColumnNotFound(String),
-    ValueAndDefaultMissing(String),
-    NotImplemented(String),
-    ExpectedValue(String),
+    #[error("Column '{0}' not found in table '{1}'")]
+    ColumnNotFound(String, String),
+    #[error("The query is not a transaction")]
     NotATransaction,
+    #[error("Unknown reference '{0}'")]
     SymbolNotFound(String),
+    #[error("Only rows can be inserted into a table")]
     ExpectedRow,
-    ValueAndColumnMismatch(usize, usize),
+    #[error("Expected a value, but found a row")]
     RowCannotBeEmbeddedIntoAnotherRow,
 }

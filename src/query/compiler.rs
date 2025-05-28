@@ -139,7 +139,7 @@ impl PlanCompiler {
             .ok_or_else(|| QueryError::TableNotFound(table.to_string()))?
             .info
             .get_column_index(column)
-            .ok_or_else(|| QueryError::ColumnNotFound(column.to_string()))
+            .ok_or_else(|| QueryError::ColumnNotFound(column.to_string(), table.to_string()))
     }
 
     // TODO: implement
