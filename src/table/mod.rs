@@ -2,12 +2,12 @@ use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::{DataType, Value};
 use crate::table::heap::TableHeap;
-use crate::table::interface::InternalTableInterface;
+use crate::table::internal::InternalTableInterface;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod heap;
-mod interface;
+mod internal;
 
 #[derive(Clone, Debug)]
 pub struct TableInfo {
@@ -52,19 +52,14 @@ impl TableCatalog {
         }
     }
 
-    pub async fn create_blank(
+    pub async fn init_then_load(
         io: Arc<IoManager>,
         buffer_pool: Arc<BufferPool>,
     ) -> Self {
-        let internals = InternalTableInterface::create(buffer_pool.clone(), io).await;
-        let internal_tables = internals.generate_physicals().await;
-
-        let mut catalog = TableCatalog::new(internals, buffer_pool);
-        for table in internal_tables {
-            catalog.tables.insert(table.name.clone(), table);
-        }
-
-        catalog
+        InternalTableInterface::init_internals(buffer_pool.clone(), io.clone()).await;
+        TableCatalog::load(io, buffer_pool)
+            .await
+            .expect("Failed to load catalog after creation")
     }
 
     pub async fn create_table(&mut self, name: String, info: TableInfo) -> std::io::Result<()> {
@@ -92,13 +87,8 @@ impl TableCatalog {
     ) -> std::io::Result<Self> {
         let internals = InternalTableInterface::from_disk(pool.clone(), io).await?;
         let tables = internals.load_tables().await?;
-        let internal_tables = internals.generate_physicals().await;
-
         let mut catalog = TableCatalog::new(internals, pool);
-        for table in internal_tables {
-            catalog.tables.insert(table.name.clone(), table);
-        }
-        catalog.tables.extend(tables);
+        catalog.tables = tables;
         Ok(catalog)
     }
 }

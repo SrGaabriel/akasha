@@ -36,7 +36,7 @@ pub enum TransformError {
 
 pub type QueryResult<T> = Result<T, QueryError>;
 
-#[derive(Debug)] // todo: better errors
+#[derive(Debug)]
 pub enum QueryError {
     TableNotFound(String),
     InvalidSchema(String),

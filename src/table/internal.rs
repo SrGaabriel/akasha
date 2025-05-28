@@ -18,6 +18,7 @@ pub const COLUMNS_TABLE_TABLE_ID_INDEX: usize = 1;
 pub const COLUMNS_TABLE_NAME_INDEX: usize = 2;
 pub const COLUMNS_TABLE_TYPE_INDEX: usize = 3;
 pub const COLUMNS_TABLE_NULLABLE_INDEX: usize = 4;
+pub const COLUMNS_TABLE_DEFAULT_INDEX: usize = 5;
 
 pub struct InternalTableInterface {
     pub pool: Arc<BufferPool>,
@@ -34,22 +35,23 @@ impl InternalTableInterface {
         Ok(InternalTableInterface { pool, io, relations_table, columns_table })
     }
 
-    pub async fn create(
+    pub async fn init_internals(
         pool: Arc<BufferPool>,
         io: Arc<IoManager>,
-    ) -> Self {
+    ) {
         let relations_table = TableHeap::new(RELATIONS_TABLE_ID, pool.clone());
         let columns_table = TableHeap::new(COLUMNS_TABLE_ID, pool.clone());
 
-        relations_table.init().await;
-        columns_table.init().await;
-
-        InternalTableInterface {
+        let interface = InternalTableInterface {
             pool,
             io,
-            relations_table,
-            columns_table,
-        }
+            relations_table: relations_table.clone(),
+            columns_table: columns_table.clone(),
+        };
+
+        println!("Creating internal tables...");
+        interface.save_table(relations_table, "akasha.relations".to_string(), relations_table_columns()).await.expect("Failed to save relations table");
+        interface.save_table(columns_table, "akasha.columns".to_string(), columns_table_columns()).await.expect("Failed to save columns table");
     }
 
     pub async fn load_tables(&self) -> std::io::Result<HashMap<String, PhysicalTable>> {
@@ -64,13 +66,14 @@ impl InternalTableInterface {
                 let data_type: DataType = DataType::from_id(tuple.0[COLUMNS_TABLE_TYPE_INDEX].as_byte().unwrap())
                     .expect("Invalid data type");
                 let nullable: bool = tuple.0[COLUMNS_TABLE_NULLABLE_INDEX].as_boolean().unwrap();
+                let default = tuple.0.get(COLUMNS_TABLE_DEFAULT_INDEX).cloned();
 
                 let column_info = ColumnInfo {
                     id: column_id,
                     name,
                     data_type,
                     nullable,
-                    default: None, // TODO: handle defaults
+                    default
                 };
 
                 Some((table_id, column_info))
@@ -112,6 +115,7 @@ impl InternalTableInterface {
     }
 
     pub async fn save_table(&self, heap: Arc<TableHeap>, name: String, columns: HashMap<String, ColumnInfo>) -> std::io::Result<PhysicalTable> {
+        heap.init().await;
         let mut column_rows: Vec<Tuple> = Vec::new();
         for column in columns.values() {
             let tuple = Tuple(vec![
@@ -130,11 +134,10 @@ impl InternalTableInterface {
         }
 
         let relation_tuple = Tuple(vec![
-            Value::Int(heap.file_id as i32),
-            Value::Text(name.clone()),
+            Value::Int(heap.file_id as i32), // RELATIONS_TABLE_ID_INDEX
+            Value::Text(name.clone()), // RELATIONS_TABLE_NAME_INDEX
         ]);
         self.relations_table.insert_tuple(&relation_tuple).await.expect("Failed to insert relation tuple");
-        heap.init().await;
 
         Ok(PhysicalTable {
             file_id: heap.file_id,
@@ -144,91 +147,72 @@ impl InternalTableInterface {
         })
     }
 
-    pub async fn generate_physicals(&self) -> Vec<PhysicalTable> {
-        let mut physicals = Vec::new();
-
-        let relations = PhysicalTable {
-            file_id: RELATIONS_TABLE_ID,
-            name: "akasha.relations".to_string(),
-            heap: self.relations_table.clone(),
-            info: TableInfo {
-                columns: HashMap::from([
-                    ("id".to_string(), ColumnInfo {
-                        id: 0,
-                        name: "id".to_string(),
-                        data_type: DataType::Int,
-                        nullable: false,
-                        default: None,
-                    }),
-                    ("name".to_string(), ColumnInfo {
-                        id: 1,
-                        name: "name".to_string(),
-                        data_type: DataType::Text,
-                        nullable: false,
-                        default: None,
-                    }),
-                ]),
-            },
-        };
-        physicals.push(relations);
-
-        let columns = PhysicalTable {
-            file_id: COLUMNS_TABLE_ID,
-            name: "akasha.columns".to_string(),
-            heap: self.columns_table.clone(),
-            info: TableInfo {
-                columns: HashMap::from([
-                    ("id".to_string(), ColumnInfo {
-                        id: 0,
-                        name: "id".to_string(),
-                        data_type: DataType::Int,
-                        nullable: false,
-                        default: None,
-                    }),
-                    ("table_id".to_string(), ColumnInfo {
-                        id: 1,
-                        name: "table_id".to_string(),
-                        data_type: DataType::Int,
-                        nullable: false,
-                        default: None,
-                    }),
-                    ("name".to_string(), ColumnInfo {
-                        id: 2,
-                        name: "name".to_string(),
-                        data_type: DataType::Text,
-                        nullable: false,
-                        default: None,
-                    }),
-                    ("type".to_string(), ColumnInfo {
-                        id: 3,
-                        name: "type".to_string(),
-                        data_type: DataType::Byte,
-                        nullable: false,
-                        default: None,
-                    }),
-                    ("nullable".to_string(), ColumnInfo {
-                        id: 4,
-                        name: "nullable".to_string(),
-                        data_type: DataType::Boolean,
-                        nullable: false,
-                        default: None,
-                    }),
-                ]),
-            },
-        };
-        physicals.push(columns);
-
-        physicals
-    }
-
     async fn load_table_heap(&self, file_id: u32) -> std::io::Result<Arc<TableHeap>> {
         load_table_heap(file_id, self.io.clone(), self.pool.clone()).await
     }
 }
 
-
 async fn load_table_heap(file_id: u32, io: Arc<IoManager>, buffer_pool: Arc<BufferPool>) -> std::io::Result<Arc<TableHeap>> {
     TableHeap::from_existing(file_id, buffer_pool, io)
         .await
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+}
+
+fn relations_table_columns() -> HashMap<String, ColumnInfo> {
+    HashMap::from([
+        ("id".to_string(), ColumnInfo {
+            id: 0,
+            name: "id".to_string(),
+            data_type: DataType::Int,
+            nullable: false,
+            default: None,
+        }),
+        ("name".to_string(), ColumnInfo {
+            id: 1,
+            name: "name".to_string(),
+            data_type: DataType::Text,
+            nullable: false,
+            default: None,
+        }),
+    ])
+}
+
+fn columns_table_columns() -> HashMap<String, ColumnInfo> {
+    HashMap::from([
+        ("id".to_string(), ColumnInfo {
+            id: 0,
+            name: "id".to_string(),
+            data_type: DataType::Int,
+            nullable: false,
+            default: None,
+        }),
+        ("table_id".to_string(), ColumnInfo {
+            id: 1,
+            name: "table_id".to_string(),
+            data_type: DataType::Int,
+            nullable: false,
+            default: None,
+        }),
+        ("name".to_string(), ColumnInfo {
+            id: 2,
+            name: "name".to_string(),
+            data_type: DataType::Text,
+            nullable: false,
+            default: None,
+        }),
+        ("type".to_string(), ColumnInfo {
+            id: 3,
+            name: "type".to_string(),
+            data_type: DataType::Byte,
+            nullable: false,
+            default: None,
+        }),
+        ("nullable".to_string(), ColumnInfo {
+            id: 4,
+            name: "nullable".to_string(),
+            data_type: DataType::Boolean,
+            nullable: false,
+            default: None,
+        }),
+    ])
 }

@@ -85,12 +85,12 @@ impl QueryEngine {
             }
             Err(err) => {
                 eprintln!("Error loading catalog: {}", err);
-                let mut cat = TableCatalog::create_blank(io.clone(), buffer_pool.clone()).await;
+                let mut cat = TableCatalog::init_then_load(io.clone(), buffer_pool.clone()).await;
                 let mut columns = HashMap::new();
                 columns.insert("name".to_string(), ColumnInfo {
                     id: 0,
                     name: "name".to_string(),
-                    data_type: page::tuple::DataType::Int,
+                    data_type: page::tuple::DataType::Text,
                     default: None,
                     nullable: false,
                 });

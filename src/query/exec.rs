@@ -85,7 +85,7 @@ impl QueryExecutor {
                 tuple_values.push(Value::Null);
             } else {
                 return Err(format!(
-                    "Missing value for non-nullable column '{}'",
+                    "Missing value for column without defaults '{}'",
                     col_name
                 ));
             }

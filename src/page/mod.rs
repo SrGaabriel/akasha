@@ -2,6 +2,7 @@ pub mod file;
 pub mod io;
 pub mod pool;
 pub mod tuple;
+pub mod err;
 
 use crate::page::tuple::Tuple;
 use std::mem::size_of;
