@@ -17,7 +17,7 @@ pub enum Transaction {
         table: String,
         values: Vec<(String, Value)>,
         ops: Vec<TableOp>,
-        returning: bool,
+        returning: Option<Vec<usize>>,
     },
     Select {
         table: String,
@@ -65,7 +65,7 @@ pub enum QueryExpr {
 
     Predicate(Rc<PredicateExpr>),
     Instance(Vec<(String, QueryExpr)>),
-    ColumnNames(Vec<String>),
+    Tuple(Vec<String>),
 
     BuiltInFunction {
         name: String,
@@ -80,6 +80,7 @@ pub enum TransactionType {
     Insert {
         table_name: String,
         value: Rc<QueryExpr>,
+        returning: Option<Vec<String>>
     },
 }
 

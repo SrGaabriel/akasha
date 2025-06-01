@@ -17,8 +17,7 @@ pub struct TableInfo {
 
 impl TableInfo {
     pub fn get_column_index(&self, name: &str) -> Option<usize> {
-        self.columns.values().find(|col| col.name == name)
-            .map(|col| col.id as usize)
+        self.columns.get(name).map(|col| col.id as usize)
     }
 }
 

@@ -109,6 +109,33 @@ impl<'a> AstToQueryTransformer<'a> {
                         typ: TransactionType::Insert {
                             table_name: table_name.clone(),
                             value: Rc::new(value),
+                            returning: None
+                        },
+                        operations: vec![],
+                    })
+                } else {
+                    Err(TransformError::InvalidArgument("insert".to_string()))
+                }
+            },
+        });
+
+        built_in_functions.insert("insertR".to_string(), BuiltInTransactionFunction {
+            name: "insertR".to_string(),
+            arity: 3,
+            apply: |_, args| {
+                if let QueryExpr::Reference(table_name) = &args[0] {
+                    let value = args[1].clone();
+                    let columns = match &args[2] {
+                        QueryExpr::Tuple(cols) => cols.clone(),
+                        QueryExpr::Reference(name) => vec![name.clone()],
+                        _ => return Err(TransformError::InvalidArgument("insertR".to_string())),
+                    };
+
+                    Ok(QueryExpr::Transaction {
+                        typ: TransactionType::Insert {
+                            table_name: table_name.clone(),
+                            value: Rc::new(value),
+                            returning: Some(columns),
                         },
                         operations: vec![],
                     })
@@ -123,7 +150,7 @@ impl<'a> AstToQueryTransformer<'a> {
             arity: 2,
             apply: |_, mut args| {
                 let columns = match args.get(0) {
-                    Some(QueryExpr::ColumnNames(cols)) => cols.clone(),
+                    Some(QueryExpr::Tuple(cols)) => cols.clone(),
                     Some(QueryExpr::Reference(name)) => vec![name.clone()],
                     _ => return Err(TransformError::ExpectedLambda),
                 };
@@ -296,7 +323,7 @@ impl<'a> AstToQueryTransformer<'a> {
                         }
                     }
                 }
-                Ok(QueryExpr::ColumnNames(fields))
+                Ok(QueryExpr::Tuple(fields))
             }
             u => Err(TransformError::UnsupportedExpression(u.clone())),
         }

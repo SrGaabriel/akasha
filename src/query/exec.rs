@@ -52,17 +52,21 @@ impl QueryExecutor {
                     .catalog
                     .get_table(&table)
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
-                let tuple = Self::build_tuple(&physical_table.info, values.clone())?;
+                let mut tuple = Self::build_tuple(&physical_table.info, values.clone())?;
                 let heap = physical_table.heap.clone();
                 heap.insert_tuple(&tuple)
                     .await
                     .map_err(|e| format!("Insert failed: {}", e))?;
 
-                if *returning {
-                    Ok(Box::pin(futures::stream::iter(vec![])))
-                } else {
-                    let base_stream = Box::pin(futures::stream::iter(vec![tuple]));
+                if let Some(returning_columns) = returning {
+                    let tuple_values: Vec<Value> = returning_columns
+                        .iter()
+                        .map(|idx| std::mem::replace(&mut tuple.0[*idx], Value::Null))
+                        .collect();
+                    let base_stream = Box::pin(futures::stream::iter(vec![Tuple(tuple_values)]));
                     Ok(Self::apply_ops(base_stream, ops))
+                } else {
+                    Ok(Box::pin(futures::stream::iter(vec![])))
                 }
             }
         }
@@ -70,24 +74,21 @@ impl QueryExecutor {
 
     fn build_tuple(table_info: &TableInfo, values: Vec<(String, Value)>) -> Result<Tuple, String> {
         let value_map: HashMap<String, Value> = values.into_iter().collect();
-        let columns: Vec<(String, ColumnInfo)> = table_info
-            .columns
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        let mut tuple_values = Vec::new();
+        let mut columns: Vec<&ColumnInfo> = table_info.columns.values().collect();
+        columns.sort_by_key(|col| col.id);
 
-        for (col_name, col_info) in columns {
-            if let Some(val) = value_map.get(&col_name) {
+        let mut tuple_values = Vec::new();
+        for col in columns {
+            if let Some(val) = value_map.get(&col.name) {
                 tuple_values.push(Value::from(val.clone()));
-            } else if let Some(default) = &col_info.default {
+            } else if let Some(default) = &col.default {
                 tuple_values.push(default.clone());
-            } else if col_info.nullable {
+            } else if col.nullable {
                 tuple_values.push(Value::Null);
             } else {
                 return Err(format!(
                     "Missing value for column without defaults '{}'",
-                    col_name
+                    col.name
                 ));
             }
         }

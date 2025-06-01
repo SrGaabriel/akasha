@@ -56,9 +56,19 @@ impl PlanCompiler {
                             ops,
                         })
                     }
-                    TransactionType::Insert { table_name, value } => {
+                    TransactionType::Insert { table_name, value, returning } => {
                         let ops = self.build_ops(table_name, operations)?;
                         let value = self.compile_expr(value)?;
+                        let returning_indices = if let Some(returning_columns) = returning {
+                            Some(
+                                returning_columns
+                                    .iter()
+                                    .map(|col| self.resolve_column_index(table_name, col))
+                                    .collect::<QueryResult<Vec<_>>>()?,
+                            )
+                        } else {
+                            None
+                        };
 
                         match value {
                             TransactionValue::Row(values) => {
@@ -66,7 +76,7 @@ impl PlanCompiler {
                                     table: table_name.clone(),
                                     values,
                                     ops,
-                                    returning: false, // todo: implement returning
+                                    returning: returning_indices,
                                 })
                             }
                             _ => Err(QueryError::ExpectedRow),
