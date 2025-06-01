@@ -121,8 +121,11 @@ impl<'src> Parser<'src> {
     fn pipe_expression(&mut self) -> Result<NodeId, ParseError<'src>> {
         let mut left = self.comparison_expression()?;
 
-        while self.peek_is_any(&[TokenKind::Application]) {
-            self.consume()?;
+        // Use peek_is_any_relevant to look past newlines for pipe operators
+        while self.peek_is_any_relevant(&[TokenKind::Application]) {
+            // Skip newlines before consuming the pipe operator
+            self.skip_newlines();
+            self.consume()?; // consume the pipe operator
             let right = self.comparison_expression()?;
 
             if let Some((func, mut args)) = self.arena.extract_function_call(right) {
