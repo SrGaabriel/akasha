@@ -130,6 +130,14 @@ impl PlanCompiler {
                 count: *count,
                 offset: offset.unwrap_or(0),
             }]),
+            TransactionOp::Project { columns } => {
+                let mut indices = vec![];
+                for column in columns {
+                    let index = self.resolve_column_index(table, column)?;
+                    indices.push(index);
+                }
+                Ok(vec![TableOp::Project(indices)])
+            }
         }
     }
 

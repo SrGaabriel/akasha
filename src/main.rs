@@ -1,6 +1,6 @@
 #![feature(let_chains)]
 
-use crate::frontend::ast::Arena;
+use crate::frontend::ast::{Arena, Visitor};
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::parse_expression;
 use crate::page::io::{FileSystemManager, IoManager};
@@ -19,6 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
+use crate::frontend::print::PrettyPrinter;
 
 pub mod frontend;
 pub mod page;
@@ -145,15 +146,25 @@ impl QueryEngine {
 
         let parse_timer = DebugTimer::new("Parsing", self.debug_mode);
         let root_id = parse_expression(&*lexed, &mut self.arena).unwrap();
+        if self.debug_mode {
+            let mut printer = PrettyPrinter::new();
+            printer.visit(&self.arena, root_id);
+        }
         drop(parse_timer);
 
         let transform_timer = DebugTimer::new("AST transformation", self.debug_mode);
         let mut transformer = AstToQueryTransformer::new(&self.arena, Box::new(IdentityOptimizer));
         let transformed = transformer.transform(root_id)?;
+        if self.debug_mode {
+            println!("\nTransformed query: {:#?}", transformed);
+        }
         drop(transform_timer);
 
         let compile_timer = DebugTimer::new("Query compilation", self.debug_mode);
         let compiled = self.compiler.compile(&transformed).unwrap();
+        if self.debug_mode {
+            println!("\nCompiled query: {:#?}", compiled);
+        }
         drop(transformed);
         drop(compile_timer);
 
@@ -171,6 +182,15 @@ impl QueryEngine {
             execution_elapsed,
             total_elapsed
         );
+        println!("\nResults:");
+        if tuples.is_empty() {
+            println!("No results found.");
+        } else {
+            for tuple in tuples {
+                println!("{:?}", tuple);
+            }
+        }
+        println!();
 
         Ok(())
     }

@@ -1,1 +1,1 @@
-scan users |> filter (\u -> u.age > 34)
+scan users |> filter (\u -> u.age > 34) |> project (name)

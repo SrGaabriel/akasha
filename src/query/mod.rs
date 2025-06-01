@@ -4,6 +4,7 @@ pub mod exec;
 pub mod op;
 pub mod optimizer;
 pub mod transformer;
+mod stream;
 
 use crate::frontend::ast::NodeId;
 use crate::page::tuple::Value;
@@ -64,6 +65,7 @@ pub enum QueryExpr {
 
     Predicate(Rc<PredicateExpr>),
     Instance(Vec<(String, QueryExpr)>),
+    ColumnNames(Vec<String>),
 
     BuiltInFunction {
         name: String,
@@ -85,6 +87,7 @@ pub enum TransactionType {
 pub enum TransactionOp {
     Filter { predicate: Rc<PredicateExpr> },
     Limit { count: usize, offset: Option<usize> },
+    Project { columns: Vec<String> },
 }
 
 #[derive(Debug, Clone)]

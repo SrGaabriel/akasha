@@ -118,6 +118,31 @@ impl<'a> AstToQueryTransformer<'a> {
             },
         });
 
+        built_in_functions.insert("project".to_string(), BuiltInTransactionFunction {
+            name: "project".to_string(),
+            arity: 2,
+            apply: |_, mut args| {
+                let columns = match args.get(0) {
+                    Some(QueryExpr::ColumnNames(cols)) => cols.clone(),
+                    Some(QueryExpr::Reference(name)) => vec![name.clone()],
+                    _ => return Err(TransformError::ExpectedLambda),
+                };
+
+                let input = args
+                    .get_mut(1)
+                    .ok_or_else(|| TransformError::InvalidArgument("project".to_string()))?;
+
+                match input {
+                    QueryExpr::Transaction { operations, .. } => {
+                        operations.push(TransactionOp::Project { columns });
+                    }
+                    _ => return Err(TransformError::InvalidArgument("project".to_string())),
+                }
+
+                Ok(input.clone())
+            }
+        });
+
         Self {
             arena,
             optimizer,
@@ -257,6 +282,21 @@ impl<'a> AstToQueryTransformer<'a> {
                 } else {
                     Err(TransformError::InvalidFieldAccess)
                 }
+            }
+            Expr::Tuple(tuple) => {
+                let mut fields = Vec::new();
+                for value_id in tuple {
+                    let value = self.transform_node(*value_id)?;
+                    match value {
+                        QueryExpr::Reference(name) => {
+                            fields.push(name);
+                        }
+                        _ => {
+                            return Err(TransformError::InvalidColumnName);
+                        }
+                    }
+                }
+                Ok(QueryExpr::ColumnNames(fields))
             }
             u => Err(TransformError::UnsupportedExpression(u.clone())),
         }

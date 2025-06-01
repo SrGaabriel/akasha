@@ -7,6 +7,7 @@ use futures::Stream;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
+use crate::query::stream::apply_ops;
 
 pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
 
@@ -93,6 +94,7 @@ impl QueryExecutor {
         Ok(Tuple(tuple_values))
     }
 
+    #[inline]
     fn apply_ops<S>(
         stream: S,
         ops: &Vec<TableOp>,
@@ -100,11 +102,6 @@ impl QueryExecutor {
     where
         S: Stream<Item = Tuple> + Send + 'static,
     {
-        let mut result_stream =
-            Box::pin(stream) as Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
-        for op in ops {
-            result_stream = op.apply(result_stream);
-        }
-        result_stream
+        apply_ops(stream, ops)
     }
 }

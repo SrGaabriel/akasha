@@ -32,6 +32,8 @@ pub enum TransformError {
         expected: usize,
         found: usize,
     },
+    #[error("Invalid column name")]
+    InvalidColumnName,
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;
