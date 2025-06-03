@@ -1,8 +1,8 @@
+use crate::page::err::DbResult;
 use crate::page::{PAGE_SIZE, Page};
 use std::io::SeekFrom;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use crate::page::err::DbResult;
 
 pub const EXTENSION: &str = "record";
 
@@ -24,11 +24,7 @@ impl RelationFile {
     }
 
     pub async fn open_existing(id: u32, path: &str) -> DbResult<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .await?;
+        let file = OpenOptions::new().read(true).write(true).open(path).await?;
         Ok(RelationFile { id, file })
     }
 

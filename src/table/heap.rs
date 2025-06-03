@@ -1,5 +1,5 @@
-use std::fmt::Debug;
 use crate::page::Page;
+use crate::page::err::DbResult;
 use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::Tuple;
@@ -7,10 +7,10 @@ use futures::{
     Future, Stream,
     task::{Context, Poll},
 };
+use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::page::err::DbResult;
 
 pub struct TableHeap {
     pub file_id: u32,
@@ -32,9 +32,7 @@ impl TableHeap {
         buffer_pool: Arc<BufferPool>,
         io: Arc<IoManager>,
     ) -> DbResult<Arc<Self>> {
-        let page_count = io
-            .try_get_page_count(file_id)
-            .await?;
+        let page_count = io.try_get_page_count(file_id).await?;
         let page_ids = (0..page_count).collect::<Vec<u32>>();
         Ok(Arc::new(TableHeap {
             file_id,
@@ -47,7 +45,9 @@ impl TableHeap {
         let ptr = self.buffer_pool.get_page_ptr(self.file_id, 0).await;
         let mut page = unsafe { Page::from_raw(0, ptr) };
         page.init_new();
-        self.buffer_pool.unpin_and_flush(self.file_id, 0, true).await;
+        self.buffer_pool
+            .unpin_and_flush(self.file_id, 0, true)
+            .await;
     }
 
     pub async fn get_tuple(&self, page_id: u32, slot_id: usize) -> Option<Tuple> {

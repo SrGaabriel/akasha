@@ -1,18 +1,13 @@
 use crate::frontend::ast::{Arena, Expr, NodeId};
 use crate::frontend::lexer::TokenKind;
 use crate::page::tuple::Value;
+use crate::query::builtins::BuiltInTransactionFunction;
 use crate::query::err::TransformError;
 use crate::query::optimizer::QueryOptimizer;
 use crate::query::{BinaryOperator, ComparisonOperator};
-use crate::query::{PredicateExpr, QueryExpr, TransactionOp, TransactionType};
+use crate::query::{PredicateExpr, QueryExpr};
 use std::collections::HashMap;
 use std::rc::Rc;
-
-struct BuiltInTransactionFunction {
-    name: String,
-    arity: usize,
-    apply: fn(&mut AstToQueryTransformer, Vec<QueryExpr>) -> Result<QueryExpr, TransformError>,
-}
 
 pub struct AstToQueryTransformer<'a> {
     arena: &'a Arena,
@@ -35,140 +30,26 @@ pub enum SymbolInfo {
 impl<'a> AstToQueryTransformer<'a> {
     pub fn new(arena: &'a Arena, optimizer: Box<dyn QueryOptimizer>) -> Self {
         let mut built_in_functions = HashMap::new();
-
-        built_in_functions.insert("scan".to_string(), BuiltInTransactionFunction {
-            name: "scan".to_string(),
-            arity: 1,
-            apply: |_, args| {
-                if let QueryExpr::Literal(Value::Text(table_name)) = &args[0] {
-                    Ok(QueryExpr::Transaction {
-                        typ: TransactionType::Scan {
-                            table_name: table_name.clone(),
-                        },
-                        operations: vec![],
-                    })
-                } else if let QueryExpr::Reference(table_name) = &args[0] {
-                    Ok(QueryExpr::Transaction {
-                        typ: TransactionType::Scan {
-                            table_name: table_name.clone(),
-                        },
-                        operations: vec![],
-                    })
-                } else {
-                    Err(TransformError::InvalidArgument("scan".to_string()))
-                }
-            },
-        });
-
-        built_in_functions.insert("filter".to_string(), BuiltInTransactionFunction {
-            name: "filter".to_string(),
-            arity: 2,
-            apply: |transformer, mut args| {
-                if let QueryExpr::Lambda { params, body, .. } = &args[0] {
-                    if params.len() == 1 {
-                        transformer.push_scope();
-                        transformer.set_row_variable(&params[0]);
-
-                        let predicate = match transformer.transform_to_predicate(*body) {
-                            Ok(pred) => pred,
-                            Err(e) => return Err(e),
-                        };
-
-                        transformer.pop_scope();
-                        transformer.clear_row_variable();
-
-                        let input = args
-                            .get_mut(1)
-                            .ok_or_else(|| TransformError::InvalidArgument("filter".to_string()))?;
-                        match input {
-                            QueryExpr::Transaction { operations, .. } => {
-                                operations.push(TransactionOp::Filter {
-                                    predicate: Rc::new(predicate),
-                                });
-                            }
-                            _ => return Err(TransformError::InvalidArgument("filter".to_string())),
-                        }
-                        Ok(input.clone())
-                    } else {
-                        Err(TransformError::InvalidLambdaParams)
-                    }
-                } else {
-                    Err(TransformError::ExpectedLambda)
-                }
-            },
-        });
-
-        built_in_functions.insert("insert".to_string(), BuiltInTransactionFunction {
-            name: "insert".to_string(),
-            arity: 2,
-            apply: |_, args| {
-                if let QueryExpr::Reference(table_name) = &args[0] {
-                    let value = args[1].clone();
-
-                    Ok(QueryExpr::Transaction {
-                        typ: TransactionType::Insert {
-                            table_name: table_name.clone(),
-                            value: Rc::new(value),
-                            returning: None
-                        },
-                        operations: vec![],
-                    })
-                } else {
-                    Err(TransformError::InvalidArgument("insert".to_string()))
-                }
-            },
-        });
-
-        built_in_functions.insert("insertR".to_string(), BuiltInTransactionFunction {
-            name: "insertR".to_string(),
-            arity: 3,
-            apply: |_, args| {
-                if let QueryExpr::Reference(table_name) = &args[0] {
-                    let value = args[1].clone();
-                    let columns = match &args[2] {
-                        QueryExpr::Tuple(cols) => cols.clone(),
-                        QueryExpr::Reference(name) => vec![name.clone()],
-                        _ => return Err(TransformError::InvalidArgument("insertR".to_string())),
-                    };
-
-                    Ok(QueryExpr::Transaction {
-                        typ: TransactionType::Insert {
-                            table_name: table_name.clone(),
-                            value: Rc::new(value),
-                            returning: Some(columns),
-                        },
-                        operations: vec![],
-                    })
-                } else {
-                    Err(TransformError::InvalidArgument("insert".to_string()))
-                }
-            },
-        });
-
-        built_in_functions.insert("project".to_string(), BuiltInTransactionFunction {
-            name: "project".to_string(),
-            arity: 2,
-            apply: |_, mut args| {
-                let columns = match args.get(0) {
-                    Some(QueryExpr::Tuple(cols)) => cols.clone(),
-                    Some(QueryExpr::Reference(name)) => vec![name.clone()],
-                    _ => return Err(TransformError::ExpectedLambda),
-                };
-
-                let input = args
-                    .get_mut(1)
-                    .ok_or_else(|| TransformError::InvalidArgument("project".to_string()))?;
-
-                match input {
-                    QueryExpr::Transaction { operations, .. } => {
-                        operations.push(TransactionOp::Project { columns });
-                    }
-                    _ => return Err(TransformError::InvalidArgument("project".to_string())),
-                }
-
-                Ok(input.clone())
-            }
-        });
+        let mut builtin = |name: &str,
+                           arity: usize,
+                           apply: fn(
+            &mut AstToQueryTransformer,
+            Vec<QueryExpr>,
+        ) -> Result<QueryExpr, TransformError>|
+         -> () {
+            built_in_functions.insert(name.to_string(), BuiltInTransactionFunction {
+                name: name.to_string(),
+                arity,
+                apply,
+            });
+        };
+        builtin("scan", 1, crate::query::builtins::scan_impl);
+        builtin("filter", 2, crate::query::builtins::filter_impl);
+        builtin("insert_", 2, crate::query::builtins::insert_impl);
+        builtin("insert", 3, crate::query::builtins::insert_r_impl);
+        builtin("project", 2, crate::query::builtins::project_impl);
+        builtin("limit", 2, crate::query::builtins::limit_impl);
+        builtin("offset", 2, crate::query::builtins::offset_impl);
 
         Self {
             arena,
@@ -360,7 +241,10 @@ impl<'a> AstToQueryTransformer<'a> {
         Ok(QueryExpr::Reference(name.to_string()))
     }
 
-    fn transform_to_predicate(&mut self, node_id: NodeId) -> Result<PredicateExpr, TransformError> {
+    pub(crate) fn transform_to_predicate(
+        &mut self,
+        node_id: NodeId,
+    ) -> Result<PredicateExpr, TransformError> {
         match self.arena.get(node_id) {
             Expr::BinaryOp { op, left, right } => {
                 let left_expr = self.transform_node(*left)?;
@@ -404,13 +288,13 @@ impl<'a> AstToQueryTransformer<'a> {
         }
     }
 
-    fn push_scope(&mut self) {
+    pub(crate) fn push_scope(&mut self) {
         self.current_scope.push(SymbolTable {
             symbols: HashMap::new(),
         });
     }
 
-    fn pop_scope(&mut self) {
+    pub(crate) fn pop_scope(&mut self) {
         self.current_scope.pop();
     }
 
@@ -420,11 +304,11 @@ impl<'a> AstToQueryTransformer<'a> {
         }
     }
 
-    fn set_row_variable(&mut self, name: &str) {
+    pub(crate) fn set_row_variable(&mut self, name: &str) {
         self.current_row_variable = Some(name.to_string());
     }
 
-    fn clear_row_variable(&mut self) {
+    pub(crate) fn clear_row_variable(&mut self) {
         self.current_row_variable = None;
     }
 }

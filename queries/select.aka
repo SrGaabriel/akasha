@@ -1,3 +1,5 @@
 scan users
     |> filter (\u -> u.age > 34)
     |> project (name)
+    |> limit 3
+    |> offset 1

@@ -3,6 +3,7 @@
 use crate::frontend::ast::{Arena, Visitor};
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::parse_expression;
+use crate::frontend::print::PrettyPrinter;
 use crate::page::io::{FileSystemManager, IoManager};
 use crate::page::pool::BufferPool;
 use crate::page::tuple::Tuple;
@@ -19,7 +20,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
-use crate::frontend::print::PrettyPrinter;
 
 pub mod frontend;
 pub mod page;

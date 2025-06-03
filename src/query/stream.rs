@@ -1,6 +1,6 @@
 use crate::page::tuple::{Tuple, Value};
-use crate::query::op::TableOp;
 use crate::query::ComparisonOperator;
+use crate::query::op::TableOp;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_stream::Stream;
@@ -18,14 +18,16 @@ where
     S: Stream<Item = Tuple> + Send,
 {
     fn new(stream: S, ops: Vec<TableOp>) -> Self {
-        let (offset, limit) = ops.iter().fold((0, None), |(acc_offset, acc_limit), op| {
-            match op {
-                TableOp::Limit { count, offset } => {
-                    (acc_offset + offset, Some(acc_limit.unwrap_or(usize::MAX).min(*count)))
-                }
+        let (offset, limit) = ops
+            .iter()
+            .fold((0, None), |(acc_offset, acc_limit), op| match op {
+                TableOp::Limit(count) => (
+                    acc_offset,
+                    Some(acc_limit.unwrap_or(usize::MAX).min(*count as usize)),
+                ),
+                TableOp::Offset(offset_value) => (acc_offset + *offset_value as usize, acc_limit),
                 _ => (acc_offset, acc_limit),
-            }
-        });
+            });
 
         Self {
             inner: Box::pin(stream),
@@ -39,7 +41,11 @@ where
     fn apply_ops_to_tuple(&self, mut tuple: Tuple) -> Option<Tuple> {
         for op in &self.ops {
             match op {
-                TableOp::Filter { column_index, operator, value } => {
+                TableOp::Filter {
+                    column_index,
+                    operator,
+                    value,
+                } => {
                     let Tuple(ref tuple_values) = tuple;
                     let column_value = &tuple_values[*column_index];
                     let matches = match (column_value, operator, value) {
@@ -84,8 +90,8 @@ where
                 TableOp::Map(map_fn) => {
                     tuple = map_fn(&tuple);
                 }
-                TableOp::Limit { .. } => {
-                }
+                TableOp::Limit { .. } => {}
+                TableOp::Offset { .. } => {}
             }
         }
         Some(tuple)

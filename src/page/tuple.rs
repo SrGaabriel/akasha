@@ -37,7 +37,7 @@ pub enum Value {
     Date(chrono::NaiveDate),
     DateTime(chrono::NaiveDateTime),
     Blob(Vec<u8>),
-    Byte(u8)
+    Byte(u8),
 }
 
 impl Value {

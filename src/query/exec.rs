@@ -1,13 +1,13 @@
 use crate::page::tuple::{Tuple, Value};
 use crate::query::Transaction;
 use crate::query::op::TableOp;
+use crate::query::stream::apply_ops;
 use crate::table::heap::scan_table;
 use crate::table::{ColumnInfo, TableCatalog, TableInfo};
 use futures::Stream;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use crate::query::stream::apply_ops;
 
 pub type TupleStream = Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>;
 

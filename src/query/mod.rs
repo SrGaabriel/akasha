@@ -1,10 +1,11 @@
+mod builtins;
 pub mod compiler;
 pub mod err;
 pub mod exec;
 pub mod op;
 pub mod optimizer;
-pub mod transformer;
 mod stream;
+pub mod transformer;
 
 use crate::frontend::ast::NodeId;
 use crate::page::tuple::Value;
@@ -80,15 +81,16 @@ pub enum TransactionType {
     Insert {
         table_name: String,
         value: Rc<QueryExpr>,
-        returning: Option<Vec<String>>
+        returning: Option<Vec<String>>,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum TransactionOp {
     Filter { predicate: Rc<PredicateExpr> },
-    Limit { count: usize, offset: Option<usize> },
+    Limit { count: i32 },
     Project { columns: Vec<String> },
+    Offset { offset: i32 },
 }
 
 #[derive(Debug, Clone)]

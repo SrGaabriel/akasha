@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use crate::page::err::DbResult;
 use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::{DataType, Tuple, Value};
-use crate::table::heap::{scan_table, TableHeap};
+use crate::table::heap::{TableHeap, scan_table};
 use crate::table::{ColumnInfo, PhysicalTable, TableInfo};
 use futures::StreamExt;
-use crate::page::err::DbResult;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 pub const RELATIONS_TABLE_ID: u32 = 0;
 pub const COLUMNS_TABLE_ID: u32 = 1;
@@ -33,13 +33,15 @@ impl InternalTableInterface {
         let relations_table = load_table_heap(RELATIONS_TABLE_ID, io.clone(), pool.clone()).await?;
         let columns_table = load_table_heap(COLUMNS_TABLE_ID, io.clone(), pool.clone()).await?;
 
-        Ok(InternalTableInterface { pool, io, relations_table, columns_table })
+        Ok(InternalTableInterface {
+            pool,
+            io,
+            relations_table,
+            columns_table,
+        })
     }
 
-    pub async fn init_internals(
-        pool: Arc<BufferPool>,
-        io: Arc<IoManager>,
-    ) {
+    pub async fn init_internals(pool: Arc<BufferPool>, io: Arc<IoManager>) {
         let relations_table = TableHeap::new(RELATIONS_TABLE_ID, pool.clone());
         let columns_table = TableHeap::new(COLUMNS_TABLE_ID, pool.clone());
 
@@ -51,8 +53,22 @@ impl InternalTableInterface {
         };
 
         println!("Creating internal tables...");
-        interface.save_table(relations_table, "akasha.relations".to_string(), relations_table_columns()).await.expect("Failed to save relations table");
-        interface.save_table(columns_table, "akasha.columns".to_string(), columns_table_columns()).await.expect("Failed to save columns table");
+        interface
+            .save_table(
+                relations_table,
+                "akasha.relations".to_string(),
+                relations_table_columns(),
+            )
+            .await
+            .expect("Failed to save relations table");
+        interface
+            .save_table(
+                columns_table,
+                "akasha.columns".to_string(),
+                columns_table_columns(),
+            )
+            .await
+            .expect("Failed to save columns table");
     }
 
     pub async fn load_tables(&self) -> DbResult<HashMap<String, PhysicalTable>> {
@@ -64,8 +80,9 @@ impl InternalTableInterface {
                 let column_id = tuple.0[COLUMNS_TABLE_ID_INDEX].as_int().unwrap() as u32;
                 let table_id: u32 = tuple.0[COLUMNS_TABLE_TABLE_ID_INDEX].as_int().unwrap() as u32;
                 let name: String = tuple.0[COLUMNS_TABLE_NAME_INDEX].as_string().unwrap();
-                let data_type: DataType = DataType::from_id(tuple.0[COLUMNS_TABLE_TYPE_INDEX].as_byte().unwrap())
-                    .expect("Invalid data type");
+                let data_type: DataType =
+                    DataType::from_id(tuple.0[COLUMNS_TABLE_TYPE_INDEX].as_byte().unwrap())
+                        .expect("Invalid data type");
                 let nullable: bool = tuple.0[COLUMNS_TABLE_NULLABLE_INDEX].as_boolean().unwrap();
                 let default = tuple.0.get(COLUMNS_TABLE_DEFAULT_INDEX).cloned();
 
@@ -74,7 +91,7 @@ impl InternalTableInterface {
                     name,
                     data_type,
                     nullable,
-                    default
+                    default,
                 };
 
                 Some((table_id, column_info))
@@ -84,7 +101,10 @@ impl InternalTableInterface {
 
         let mut columns: HashMap<u32, Vec<ColumnInfo>> = HashMap::new();
         for (table_id, column_info) in column_tuples {
-            columns.entry(table_id).or_insert_with(Vec::new).push(column_info);
+            columns
+                .entry(table_id)
+                .or_insert_with(Vec::new)
+                .push(column_info);
         }
 
         let table_tuples: Vec<Tuple> = table_iterator.collect().await;
@@ -115,30 +135,41 @@ impl InternalTableInterface {
         Ok(tables)
     }
 
-    pub async fn save_table(&self, heap: Arc<TableHeap>, name: String, columns: HashMap<String, ColumnInfo>) -> DbResult<PhysicalTable> {
+    pub async fn save_table(
+        &self,
+        heap: Arc<TableHeap>,
+        name: String,
+        columns: HashMap<String, ColumnInfo>,
+    ) -> DbResult<PhysicalTable> {
         heap.init().await;
         let mut column_rows: Vec<Tuple> = Vec::new();
         for column in columns.values() {
             let tuple = Tuple(vec![
-                Value::Int(column.id as i32), // COLUMNS_TABLE_ID_INDEX
-                Value::Int(heap.file_id as i32), // COLUMNS_TABLE_TABLE_ID_INDEX
-                Value::Text(column.name.clone()), // COLUMNS_TABLE_NAME_INDEX
+                Value::Int(column.id as i32),       // COLUMNS_TABLE_ID_INDEX
+                Value::Int(heap.file_id as i32),    // COLUMNS_TABLE_TABLE_ID_INDEX
+                Value::Text(column.name.clone()),   // COLUMNS_TABLE_NAME_INDEX
                 Value::Byte(column.data_type.id()), // COLUMNS_TABLE_TYPE_INDEX
-                Value::Boolean(column.nullable), // COLUMNS_TABLE_NULLABLE_INDEX
+                Value::Boolean(column.nullable),    // COLUMNS_TABLE_NULLABLE_INDEX
             ]);
             column_rows.push(tuple);
         }
 
         let column_heap = self.columns_table.clone();
         for tuple in column_rows {
-            column_heap.insert_tuple(&tuple).await.expect("Failed to insert column tuple");
+            column_heap
+                .insert_tuple(&tuple)
+                .await
+                .expect("Failed to insert column tuple");
         }
 
         let relation_tuple = Tuple(vec![
             Value::Int(heap.file_id as i32), // RELATIONS_TABLE_ID_INDEX
-            Value::Text(name.clone()), // RELATIONS_TABLE_NAME_INDEX
+            Value::Text(name.clone()),       // RELATIONS_TABLE_NAME_INDEX
         ]);
-        self.relations_table.insert_tuple(&relation_tuple).await.expect("Failed to insert relation tuple");
+        self.relations_table
+            .insert_tuple(&relation_tuple)
+            .await
+            .expect("Failed to insert relation tuple");
 
         Ok(PhysicalTable {
             file_id: heap.file_id,
@@ -153,7 +184,11 @@ impl InternalTableInterface {
     }
 }
 
-async fn load_table_heap(file_id: u32, io: Arc<IoManager>, buffer_pool: Arc<BufferPool>) -> DbResult<Arc<TableHeap>> {
+async fn load_table_heap(
+    file_id: u32,
+    io: Arc<IoManager>,
+    buffer_pool: Arc<BufferPool>,
+) -> DbResult<Arc<TableHeap>> {
     TableHeap::from_existing(file_id, buffer_pool, io).await
 }
 

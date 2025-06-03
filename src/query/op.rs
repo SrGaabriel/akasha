@@ -10,10 +10,8 @@ pub enum TableOp {
         value: Value,
     },
     Project(Vec<usize>),
-    Limit {
-        count: usize,
-        offset: usize,
-    },
+    Limit(i32),
+    Offset(i32),
     PredicativeFilter(Arc<dyn Fn(&Tuple) -> bool + Send + Sync>),
     Map(Arc<dyn Fn(&Tuple) -> Tuple + Send + Sync>),
 }
@@ -35,8 +33,11 @@ impl Debug for TableOp {
             TableOp::Project(indices) => {
                 write!(f, "Project(indices: {:?})", indices)
             }
-            TableOp::Limit { count, offset } => {
-                write!(f, "Limit(count: {}, offset: {})", count, offset)
+            TableOp::Limit(count) => {
+                write!(f, "Limit({})", count)
+            }
+            TableOp::Offset(offset) => {
+                write!(f, "Offset({})", offset)
             }
             TableOp::PredicativeFilter(_) => {
                 write!(f, "PredicativeFilter")

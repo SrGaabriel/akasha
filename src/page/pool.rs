@@ -1,5 +1,5 @@
-use crate::page::{Page, PAGE_SIZE};
 use crate::page::io::IoManager;
+use crate::page::{PAGE_SIZE, Page};
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 use std::sync::atomic::{

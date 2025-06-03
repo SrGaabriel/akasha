@@ -1,3 +1,4 @@
+use crate::page::err::{DbInternalError, DbResult};
 use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::{DataType, Value};
@@ -5,7 +6,6 @@ use crate::table::heap::TableHeap;
 use crate::table::internal::InternalTableInterface;
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::page::err::{DbInternalError, DbResult};
 
 pub mod heap;
 mod internal;
@@ -53,10 +53,7 @@ impl TableCatalog {
         }
     }
 
-    pub async fn init_then_load(
-        io: Arc<IoManager>,
-        buffer_pool: Arc<BufferPool>,
-    ) -> Self {
+    pub async fn init_then_load(io: Arc<IoManager>, buffer_pool: Arc<BufferPool>) -> Self {
         InternalTableInterface::init_internals(buffer_pool.clone(), io.clone()).await;
         TableCatalog::load(io, buffer_pool)
             .await
@@ -69,7 +66,10 @@ impl TableCatalog {
         }
         let file_id = self.tables.len() as u32;
         let heap = TableHeap::new(file_id, self.buffer_pool.clone());
-        let physical = self.internals.save_table(Arc::clone(&heap), name.clone(), info.columns).await?;
+        let physical = self
+            .internals
+            .save_table(Arc::clone(&heap), name.clone(), info.columns)
+            .await?;
 
         self.tables.insert(name, physical);
         Ok(())
@@ -79,10 +79,7 @@ impl TableCatalog {
         self.tables.get(name)
     }
 
-    pub async fn load(
-        io: Arc<IoManager>,
-        pool: Arc<BufferPool>,
-    ) -> DbResult<Self> {
+    pub async fn load(io: Arc<IoManager>, pool: Arc<BufferPool>) -> DbResult<Self> {
         let internals = InternalTableInterface::from_disk(Arc::clone(&pool), io).await?;
         let tables = internals.load_tables().await?;
         let mut catalog = TableCatalog::new(internals, pool);

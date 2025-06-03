@@ -34,6 +34,8 @@ pub enum TransformError {
     },
     #[error("Invalid column name")]
     InvalidColumnName,
+    #[error("Expected number")]
+    ExpectedNumber,
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;

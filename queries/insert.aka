@@ -1,4 +1,4 @@
-insertR users {
+insert users {
     age = 35,
-    name = "John Doe",
+    name = "John Doe2",
 } (name, age)

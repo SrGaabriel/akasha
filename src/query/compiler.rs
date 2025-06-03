@@ -47,50 +47,52 @@ impl PlanCompiler {
                     Err(QueryError::SymbolNotFound(name.clone()))
                 }
             }
-            QueryExpr::Transaction { operations, typ } => {
-                match &typ {
-                    TransactionType::Scan { table_name } => {
-                        let ops = self.build_ops(table_name, operations)?;
-                        Ok(Transaction::Select {
-                            table: table_name.clone(),
-                            ops,
+            QueryExpr::Transaction { operations, typ } => match &typ {
+                TransactionType::Scan { table_name } => {
+                    let ops = self.build_ops(table_name, operations)?;
+                    Ok(Transaction::Select {
+                        table: table_name.clone(),
+                        ops,
+                    })
+                }
+                TransactionType::Insert {
+                    table_name,
+                    value,
+                    returning,
+                } => {
+                    let ops = self.build_ops(table_name, operations)?;
+                    let value = self.compile_expr(value)?;
+                    let returning_indices = returning
+                        .as_ref()
+                        .map(|returning_columns| {
+                            returning_columns
+                                .iter()
+                                .map(|col| self.resolve_column_index(table_name, col))
+                                .collect::<QueryResult<Vec<usize>>>()
                         })
-                    }
-                    TransactionType::Insert { table_name, value, returning } => {
-                        let ops = self.build_ops(table_name, operations)?;
-                        let value = self.compile_expr(value)?;
-                        let returning_indices = returning
-                            .as_ref()
-                            .map(|returning_columns| {
-                                returning_columns
-                                    .iter()
-                                    .map(|col| self.resolve_column_index(table_name, col))
-                                    .collect::<QueryResult<Vec<usize>>>()
-                            })
-                            .transpose()?;
+                        .transpose()?;
 
-                        match value {
-                            TransactionValue::Row(mut values) => {
-                                let indexed_values = values
-                                    .drain(..)
-                                    .map(|(name, value)| {
-                                        self.resolve_column_index(table_name, &name)
-                                            .map(|index| (index as u32, value))
-                                    })
-                                    .collect::<QueryResult<Vec<_>>>()?;
-
-                                Ok(Transaction::Insert {
-                                    table: table_name.clone(),
-                                    values: indexed_values,
-                                    ops,
-                                    returning: returning_indices,
+                    match value {
+                        TransactionValue::Row(mut values) => {
+                            let indexed_values = values
+                                .drain(..)
+                                .map(|(name, value)| {
+                                    self.resolve_column_index(table_name, &name)
+                                        .map(|index| (index as u32, value))
                                 })
-                            }
-                            _ => Err(QueryError::ExpectedRow),
+                                .collect::<QueryResult<Vec<_>>>()?;
+
+                            Ok(Transaction::Insert {
+                                table: table_name.clone(),
+                                values: indexed_values,
+                                ops,
+                                returning: returning_indices,
+                            })
                         }
+                        _ => Err(QueryError::ExpectedRow),
                     }
                 }
-            }
+            },
             _ => Err(QueryError::NotATransaction),
         }
     }
@@ -143,10 +145,8 @@ impl PlanCompiler {
                     Ok(vec![TableOp::PredicativeFilter(filter_fn)])
                 }
             },
-            TransactionOp::Limit { count, offset } => Ok(vec![TableOp::Limit {
-                count: *count,
-                offset: offset.unwrap_or(0),
-            }]),
+            TransactionOp::Limit { count } => Ok(vec![TableOp::Limit(*count)]),
+            TransactionOp::Offset { offset } => Ok(vec![TableOp::Offset(*offset)]),
             TransactionOp::Project { columns } => {
                 let mut indices = vec![];
                 for column in columns {
