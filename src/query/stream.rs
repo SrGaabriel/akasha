@@ -74,10 +74,10 @@ where
                     }
                 }
                 TableOp::Project(indices) => {
-                    let Tuple(tuple_values) = tuple;
+                    let Tuple(mut tuple_values) = tuple;
                     let projected_values = indices
                         .iter()
-                        .map(|&idx| tuple_values[idx].clone())
+                        .map(|&idx| std::mem::replace(&mut tuple_values[idx], Value::Null))
                         .collect();
                     tuple = Tuple(projected_values);
                 }
@@ -126,10 +126,10 @@ where
 
 pub fn apply_ops<S>(
     stream: S,
-    ops: &Vec<TableOp>,
+    ops: Vec<TableOp>,
 ) -> Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>
 where
     S: Stream<Item = Tuple> + Send + 'static,
 {
-    Box::pin(CombinedOpsStream::new(stream, ops.clone()))
+    Box::pin(CombinedOpsStream::new(stream, ops))
 }

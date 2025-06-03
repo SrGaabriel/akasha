@@ -1,7 +1,6 @@
 use chrono::Datelike;
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Tuple(pub Vec<Value>);
 
 impl Tuple {
@@ -26,7 +25,7 @@ impl Tuple {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Value {
     Null,
     Int(i32),
@@ -208,7 +207,7 @@ impl Value {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub enum DataType {
     Null,     // 0x00
     Int,      // 0x01

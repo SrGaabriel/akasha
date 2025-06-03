@@ -66,6 +66,4 @@ This allows composition of queries without leaving the monadic context, preservi
 * [ ] Update query execution
 * [ ] Delete query execution
 * [ ] Indexing
-* [ ] Transactions
-* [ ] Concurrency control
   ...and more.

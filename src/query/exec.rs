@@ -30,7 +30,7 @@ impl QueryExecutor {
 
     pub async fn execute(
         &self,
-        transaction: &Transaction,
+        transaction: Transaction,
     ) -> Result<Pin<Box<dyn Stream<Item = Tuple> + Send>>, String> {
         match transaction {
             Transaction::Select { table, ops } => {
@@ -40,7 +40,7 @@ impl QueryExecutor {
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
                 let heap = physical_table.heap.clone();
                 let base_stream = scan_table(heap).await;
-                Ok(Self::apply_ops(base_stream, ops))
+                Ok(apply_ops(base_stream, ops))
             }
             Transaction::Insert {
                 table,
@@ -52,7 +52,7 @@ impl QueryExecutor {
                     .catalog
                     .get_table(&table)
                     .ok_or_else(|| format!("Table '{}' not found", table))?;
-                let mut tuple = Self::build_tuple(&physical_table.info, values.clone())?;
+                let mut tuple = Self::build_tuple(&physical_table.info, values)?;
                 let heap = physical_table.heap.clone();
                 heap.insert_tuple(&tuple)
                     .await
@@ -64,7 +64,7 @@ impl QueryExecutor {
                         .map(|idx| std::mem::replace(&mut tuple.0[*idx], Value::Null))
                         .collect();
                     let base_stream = Box::pin(futures::stream::iter(vec![Tuple(tuple_values)]));
-                    Ok(Self::apply_ops(base_stream, ops))
+                    Ok(apply_ops(base_stream, ops))
                 } else {
                     Ok(Box::pin(futures::stream::iter(vec![])))
                 }
@@ -72,15 +72,15 @@ impl QueryExecutor {
         }
     }
 
-    fn build_tuple(table_info: &TableInfo, values: Vec<(String, Value)>) -> Result<Tuple, String> {
-        let value_map: HashMap<String, Value> = values.into_iter().collect();
+    fn build_tuple(table_info: &TableInfo, values: Vec<(u32, Value)>) -> Result<Tuple, String> {
+        let mut value_map: HashMap<u32, Value> = values.into_iter().collect();
         let mut columns: Vec<&ColumnInfo> = table_info.columns.values().collect();
         columns.sort_by_key(|col| col.id);
 
         let mut tuple_values = Vec::new();
-        for col in columns {
-            if let Some(val) = value_map.get(&col.name) {
-                tuple_values.push(Value::from(val.clone()));
+        for col in columns.drain(..) {
+            if let Some(val) = value_map.remove(&col.id) {
+                tuple_values.push(Value::from(val));
             } else if let Some(default) = &col.default {
                 tuple_values.push(default.clone());
             } else if col.nullable {
@@ -93,16 +93,5 @@ impl QueryExecutor {
             }
         }
         Ok(Tuple(tuple_values))
-    }
-
-    #[inline]
-    fn apply_ops<S>(
-        stream: S,
-        ops: &Vec<TableOp>,
-    ) -> Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>
-    where
-        S: Stream<Item = Tuple> + Send + 'static,
-    {
-        apply_ops(stream, ops)
     }
 }

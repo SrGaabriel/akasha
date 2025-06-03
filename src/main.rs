@@ -76,17 +76,17 @@ impl QueryEngine {
         let file_io = Arc::new(FileSystemManager::new("database".to_string()));
         file_io.create_home().await?;
 
-        let io = Arc::new(IoManager::new(file_io.clone()));
-        let buffer_pool = BufferPool::new(io.clone());
+        let io = Arc::new(IoManager::new(Arc::clone(&file_io)));
+        let buffer_pool = BufferPool::new(Arc::clone(&io));
 
-        let catalog = match TableCatalog::load(io.clone(), buffer_pool.clone()).await {
+        let catalog = match TableCatalog::load(Arc::clone(&io), Arc::clone(&buffer_pool)).await {
             Ok(cat) => {
                 println!("Loaded catalog with {} tables", cat.tables.len());
                 cat
             }
             Err(err) => {
                 eprintln!("Error loading catalog: {}", err);
-                let mut cat = TableCatalog::init_then_load(io.clone(), buffer_pool.clone()).await;
+                let mut cat = TableCatalog::init_then_load(io, buffer_pool).await;
                 let mut columns = HashMap::new();
                 columns.insert("name".to_string(), ColumnInfo {
                     id: 0,
@@ -111,7 +111,7 @@ impl QueryEngine {
         let catalog = Arc::new(catalog);
 
         Ok(Self {
-            compiler: PlanCompiler::new(catalog.clone()),
+            compiler: PlanCompiler::new(Arc::clone(&catalog)),
             arena: Arena::with_capacity(10000, 1000),
             executor: QueryExecutor::new(catalog),
             debug_mode,
@@ -169,13 +169,12 @@ impl QueryEngine {
         drop(compile_timer);
 
         let execute_timer = DebugTimer::new("Query execution", self.debug_mode);
-        let plan = self.executor.execute(&compiled).await?;
+        let plan = self.executor.execute(compiled).await?;
         let tuples = plan.collect::<Vec<Tuple>>().await;
 
         let execution_elapsed = execute_timer.elapsed();
         let total_elapsed = total_timer.elapsed();
 
-        println!("Executed: {:?}", compiled);
         println!(
             "{:?} Query executed in {} and completed in {}",
             tuples.len(),
@@ -190,8 +189,6 @@ impl QueryEngine {
                 println!("{:?}", tuple);
             }
         }
-        println!();
-
         Ok(())
     }
 }

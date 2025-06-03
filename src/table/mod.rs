@@ -10,7 +10,7 @@ use crate::page::err::{DbInternalError, DbResult};
 pub mod heap;
 mod internal;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TableInfo {
     pub columns: HashMap<String, ColumnInfo>,
 }
@@ -21,7 +21,7 @@ impl TableInfo {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ColumnInfo {
     pub id: u32,
     pub name: String,
@@ -30,7 +30,7 @@ pub struct ColumnInfo {
     pub default: Option<Value>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PhysicalTable {
     pub file_id: u32,
     pub name: String,
@@ -69,7 +69,7 @@ impl TableCatalog {
         }
         let file_id = self.tables.len() as u32;
         let heap = TableHeap::new(file_id, self.buffer_pool.clone());
-        let physical = self.internals.save_table(heap.clone(), name.clone(), info.columns).await?;
+        let physical = self.internals.save_table(Arc::clone(&heap), name.clone(), info.columns).await?;
 
         self.tables.insert(name, physical);
         Ok(())
@@ -83,7 +83,7 @@ impl TableCatalog {
         io: Arc<IoManager>,
         pool: Arc<BufferPool>,
     ) -> DbResult<Self> {
-        let internals = InternalTableInterface::from_disk(pool.clone(), io).await?;
+        let internals = InternalTableInterface::from_disk(Arc::clone(&pool), io).await?;
         let tables = internals.load_tables().await?;
         let mut catalog = TableCatalog::new(internals, pool);
         catalog.tables = tables;

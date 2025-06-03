@@ -44,7 +44,7 @@ pub struct IoManager {
 impl IoManager {
     pub fn new(inner: Arc<FileSystemManager>) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<WriteJob>();
-        let inner_clone = inner.clone();
+        let inner_clone = Arc::clone(&inner);
 
         tokio::spawn(async move {
             while let Some(job) = rx.recv().await {

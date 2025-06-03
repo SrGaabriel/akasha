@@ -3,7 +3,6 @@ use crate::query::ComparisonOperator;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
-#[derive(Clone)]
 pub enum TableOp {
     Filter {
         column_index: usize,

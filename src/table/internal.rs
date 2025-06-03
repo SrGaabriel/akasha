@@ -96,8 +96,8 @@ impl InternalTableInterface {
             let heap = self.load_table_heap(id).await?;
 
             let columns_map: HashMap<String, ColumnInfo> = columns
-                .get(&id)
-                .map(|cols| cols.iter().map(|col| (col.name.clone(), col.clone())).collect())
+                .get_mut(&id)
+                .map(|cols| cols.drain(..).map(|col| (col.name.clone(), col)).collect())
                 .unwrap_or_default();
 
             let physical = PhysicalTable {

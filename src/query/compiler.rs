@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum TransactionValue {
     Row(Vec<(String, Value)>),
     Literal(Value),
@@ -59,22 +59,29 @@ impl PlanCompiler {
                     TransactionType::Insert { table_name, value, returning } => {
                         let ops = self.build_ops(table_name, operations)?;
                         let value = self.compile_expr(value)?;
-                        let returning_indices = if let Some(returning_columns) = returning {
-                            Some(
+                        let returning_indices = returning
+                            .as_ref()
+                            .map(|returning_columns| {
                                 returning_columns
                                     .iter()
                                     .map(|col| self.resolve_column_index(table_name, col))
-                                    .collect::<QueryResult<Vec<_>>>()?,
-                            )
-                        } else {
-                            None
-                        };
+                                    .collect::<QueryResult<Vec<usize>>>()
+                            })
+                            .transpose()?;
 
                         match value {
-                            TransactionValue::Row(values) => {
+                            TransactionValue::Row(mut values) => {
+                                let indexed_values = values
+                                    .drain(..)
+                                    .map(|(name, value)| {
+                                        self.resolve_column_index(table_name, &name)
+                                            .map(|index| (index as u32, value))
+                                    })
+                                    .collect::<QueryResult<Vec<_>>>()?;
+
                                 Ok(Transaction::Insert {
                                     table: table_name.clone(),
-                                    values,
+                                    values: indexed_values,
                                     ops,
                                     returning: returning_indices,
                                 })

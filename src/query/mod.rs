@@ -11,11 +11,11 @@ use crate::page::tuple::Value;
 use crate::query::op::TableOp;
 use std::rc::Rc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Transaction {
     Insert {
         table: String,
-        values: Vec<(String, Value)>,
+        values: Vec<(u32, Value)>,
         ops: Vec<TableOp>,
         returning: Option<Vec<usize>>,
     },

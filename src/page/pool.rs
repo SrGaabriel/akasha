@@ -181,7 +181,7 @@ impl BufferPool {
     pub fn new(io: Arc<IoManager>) -> Arc<Self> {
         let mut shards = Vec::with_capacity(SHARD_COUNT);
         for _ in 0..SHARD_COUNT {
-            shards.push(Arc::new(Shard::new(io.clone())));
+            shards.push(Arc::new(Shard::new(Arc::clone(&io))));
         }
         Arc::new(BufferPool { shards })
     }

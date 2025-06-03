@@ -102,13 +102,13 @@ enum OptimizedTableIteratorState {
 
 pub struct OptimizedTableIterator {
     heap: Arc<TableHeap>,
-    page_ids_snapshot: Arc<Vec<u32>>,
+    page_ids_snapshot: Vec<u32>,
     current_page_idx_in_snapshot: usize,
     state: OptimizedTableIteratorState,
 }
 
 impl OptimizedTableIterator {
-    fn new(heap: Arc<TableHeap>, page_ids_snapshot: Arc<Vec<u32>>) -> Self {
+    fn new(heap: Arc<TableHeap>, page_ids_snapshot: Vec<u32>) -> Self {
         OptimizedTableIterator {
             heap,
             page_ids_snapshot,
@@ -204,9 +204,11 @@ impl Stream for OptimizedTableIterator {
 }
 
 pub async fn scan_table(table_ref: Arc<TableHeap>) -> OptimizedTableIterator {
-    let page_ids_guard = table_ref.page_ids.lock().await;
-    let snapshot = Arc::new(page_ids_guard.clone());
-    OptimizedTableIterator::new(table_ref.clone(), snapshot)
+    let snapshot = {
+        let page_ids_guard = table_ref.page_ids.lock().await;
+        page_ids_guard.clone()
+    };
+    OptimizedTableIterator::new(table_ref, snapshot)
 }
 
 unsafe impl Send for OptimizedTableIterator {}
