@@ -63,7 +63,7 @@ This allows composition of queries without leaving the monadic context, which al
 * [x] Query compilation
 * [x] Select query execution
 * [x] Insert query execution
-* [ ] Update query execution
+* [x] Update query execution
 * [ ] Delete query execution
 * [ ] Indexing
   ...and more.
