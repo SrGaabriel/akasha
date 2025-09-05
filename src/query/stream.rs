@@ -3,7 +3,9 @@ use crate::query::ComparisonOperator;
 use crate::query::op::TableOp;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use futures::StreamExt;
 use tokio_stream::Stream;
+use crate::table::heap::IndexedTuple;
 
 struct CombinedOpsStream<S> {
     inner: Pin<Box<S>>,
@@ -15,7 +17,7 @@ struct CombinedOpsStream<S> {
 
 impl<S> CombinedOpsStream<S>
 where
-    S: Stream<Item = Tuple> + Send,
+    S: Stream<Item = IndexedTuple> + Send
 {
     fn new(stream: S, ops: Vec<TableOp>) -> Self {
         let (offset, limit) = ops
@@ -38,7 +40,7 @@ where
         }
     }
 
-    fn apply_ops_to_tuple(&self, mut tuple: Tuple) -> Option<Tuple> {
+    fn apply_ops_to_tuple(&self, mut tuple: IndexedTuple) -> Option<IndexedTuple> {
         for op in &self.ops {
             match op {
                 TableOp::Filter {
@@ -46,7 +48,7 @@ where
                     operator,
                     value,
                 } => {
-                    let Tuple(ref tuple_values) = tuple;
+                    let Tuple(ref tuple_values) = tuple.inner;
                     let column_value = &tuple_values[*column_index];
                     let matches = match (column_value, operator, value) {
                         (a, ComparisonOperator::Eq, b) => a == b,
@@ -75,20 +77,21 @@ where
                     }
                 }
                 TableOp::PredicativeFilter(filter_fn) => {
-                    if !filter_fn(&tuple) {
+                    if !filter_fn(&tuple.inner) {
                         return None;
                     }
                 }
                 TableOp::Project(indices) => {
-                    let Tuple(mut tuple_values) = tuple;
+                    let Tuple(ref mut tuple_values) = tuple.inner;
                     let projected_values = indices
                         .iter()
                         .map(|&idx| std::mem::replace(&mut tuple_values[idx], Value::Null))
                         .collect();
-                    tuple = Tuple(projected_values);
+                    tuple = tuple.swap(Tuple(projected_values));
                 }
                 TableOp::Map(map_fn) => {
-                    tuple = map_fn(&tuple);
+                    let mapped_tuple = map_fn(&tuple.inner);
+                    tuple = tuple.swap(mapped_tuple);
                 }
                 TableOp::Limit { .. } => {}
                 TableOp::Offset { .. } => {}
@@ -100,9 +103,9 @@ where
 
 impl<S> Stream for CombinedOpsStream<S>
 where
-    S: Stream<Item = Tuple> + Send,
+    S: Stream<Item = IndexedTuple> + Send
 {
-    type Item = Tuple;
+    type Item = IndexedTuple;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -133,9 +136,16 @@ where
 pub fn apply_ops<S>(
     stream: S,
     ops: Vec<TableOp>,
-) -> Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>
+) -> Pin<Box<dyn Stream<Item = IndexedTuple> + Send + 'static>>
 where
-    S: Stream<Item = Tuple> + Send + 'static,
+    S: Stream<Item = IndexedTuple> + Send + 'static,
 {
     Box::pin(CombinedOpsStream::new(stream, ops))
+}
+
+pub fn map_inner<S>(stream: Pin<Box<S>>) -> Pin<Box<dyn Stream<Item = Tuple> + Send + 'static>>
+where
+    S: Stream<Item = IndexedTuple> + Send + 'static + ?Sized,
+{
+    Box::pin(stream.map(|tuples| tuples.inner))
 }

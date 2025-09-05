@@ -4,8 +4,9 @@ pub mod io;
 pub mod pool;
 pub mod tuple;
 
-use crate::page::tuple::Tuple;
+use crate::page::tuple::{Tuple, Value};
 use std::mem::size_of;
+use crate::util::trees::IndexedList;
 
 pub const PAGE_SIZE: usize = 4096;
 const HEADER_SIZE: usize = size_of::<u16>() /* slot_count */ + size_of::<u16>() /* free_space_pointer */;
@@ -77,7 +78,20 @@ impl<'a> Page<'a> {
         Ok(slot_count)
     }
 
+    pub fn update_tuple(&mut self, idx: usize, values: IndexedList<Value>) {
+        if let Some((offset, length)) = self.get_tuple_pos(idx) {
+            let slice = &mut self.data[offset..offset + length];
+            Tuple::update_bytes(slice, values);
+        }
+    }
+
     pub fn get_tuple(&self, idx: usize) -> Option<Tuple> {
+        let (offset, length) = self.get_tuple_pos(idx)?;
+        let slice = &self.data[offset..offset + length];
+        Some(Tuple::from_bytes(slice))
+    }
+
+    fn get_tuple_pos(&self, idx: usize) -> Option<(usize, usize)> {
         let d = &self.data;
         let slot_count = u16::from_le_bytes([d[0], d[1]]) as usize;
 
@@ -88,10 +102,9 @@ impl<'a> Page<'a> {
         let slot_pos = HEADER_SIZE + idx * SLOT_META_SIZE;
         let offset = u16::from_le_bytes([d[slot_pos], d[slot_pos + 1]]) as usize;
         let length = u16::from_le_bytes([d[slot_pos + 2], d[slot_pos + 3]]) as usize;
-
-        let slice = &d[offset..offset + length];
-        Some(Tuple::from_bytes(slice))
+        Some((offset, length))
     }
+
     pub fn from_bytes(index: u32, data: &'a mut [u8; PAGE_SIZE]) -> Self {
         let page = Page { index, data };
         let free_ptr = u16::from_le_bytes([page.data[2], page.data[3]]) as usize;

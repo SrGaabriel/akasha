@@ -2,7 +2,7 @@ use crate::page::err::DbResult;
 use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
 use crate::page::tuple::{DataType, Tuple, Value};
-use crate::table::heap::{TableHeap, scan_table};
+use crate::table::heap::{TableHeap, scan_table, IndexedTuple};
 use crate::table::{ColumnInfo, PhysicalTable, TableInfo};
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -76,15 +76,16 @@ impl InternalTableInterface {
         let column_iterator = scan_table(self.columns_table.clone()).await;
 
         let column_tuples: Vec<(u32, ColumnInfo)> = column_iterator
-            .filter_map(|tuple| async move {
-                let column_id = tuple.0[COLUMNS_TABLE_ID_INDEX].as_int().unwrap() as u32;
-                let table_id: u32 = tuple.0[COLUMNS_TABLE_TABLE_ID_INDEX].as_int().unwrap() as u32;
-                let name: String = tuple.0[COLUMNS_TABLE_NAME_INDEX].as_string().unwrap();
+            .filter_map(|indexed_tuple| async move {
+                let tuple_values = &indexed_tuple.inner.0;
+                let column_id = tuple_values[COLUMNS_TABLE_ID_INDEX].as_int().unwrap() as u32;
+                let table_id: u32 = tuple_values[COLUMNS_TABLE_TABLE_ID_INDEX].as_int().unwrap() as u32;
+                let name: String = tuple_values[COLUMNS_TABLE_NAME_INDEX].as_string().unwrap();
                 let data_type: DataType =
-                    DataType::from_id(tuple.0[COLUMNS_TABLE_TYPE_INDEX].as_byte().unwrap())
+                    DataType::from_id(tuple_values[COLUMNS_TABLE_TYPE_INDEX].as_byte().unwrap())
                         .expect("Invalid data type");
-                let nullable: bool = tuple.0[COLUMNS_TABLE_NULLABLE_INDEX].as_boolean().unwrap();
-                let default = tuple.0.get(COLUMNS_TABLE_DEFAULT_INDEX).cloned();
+                let nullable: bool = tuple_values[COLUMNS_TABLE_NULLABLE_INDEX].as_boolean().unwrap();
+                let default = tuple_values.get(COLUMNS_TABLE_DEFAULT_INDEX).cloned();
 
                 let column_info = ColumnInfo {
                     id: column_id,
@@ -107,12 +108,13 @@ impl InternalTableInterface {
                 .push(column_info);
         }
 
-        let table_tuples: Vec<Tuple> = table_iterator.collect().await;
+        let table_tuples: Vec<IndexedTuple> = table_iterator.collect().await;
         let mut tables = HashMap::new();
 
-        for tuple in table_tuples {
-            let id: u32 = tuple.0[RELATIONS_TABLE_ID_INDEX].as_int().unwrap() as u32;
-            let name: String = tuple.0[RELATIONS_TABLE_NAME_INDEX].as_string().unwrap();
+        for indexed_tuple in table_tuples {
+            let tuple_values = &indexed_tuple.inner.0;
+            let id: u32 = tuple_values[RELATIONS_TABLE_ID_INDEX].as_int().unwrap() as u32;
+            let name: String = tuple_values[RELATIONS_TABLE_NAME_INDEX].as_string().unwrap();
             let heap = self.load_table_heap(id).await?;
 
             let columns_map: HashMap<String, ColumnInfo> = columns

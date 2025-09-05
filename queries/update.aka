@@ -1,0 +1,5 @@
+update users
+    |> filter (\u -> u.age > 34)
+    |> set {
+        age = 60
+    } (name, age)

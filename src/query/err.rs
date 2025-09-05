@@ -36,6 +36,8 @@ pub enum TransformError {
     InvalidColumnName,
     #[error("Expected number")]
     ExpectedNumber,
+    #[error("Cannot set row data on this transaction type")]
+    InvalidTransactionTypeForSet
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;
@@ -54,4 +56,6 @@ pub enum QueryError {
     ExpectedRow,
     #[error("Expected a value, but found a row")]
     RowCannotBeEmbeddedIntoAnotherRow,
+    #[error("Update without changes")]
+    UpdateWithoutChanges
 }

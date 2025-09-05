@@ -50,6 +50,8 @@ impl<'a> AstToQueryTransformer<'a> {
         builtin("project", 2, crate::query::builtins::project_impl);
         builtin("limit", 2, crate::query::builtins::limit_impl);
         builtin("offset", 2, crate::query::builtins::offset_impl);
+        builtin("set", 3, crate::query::builtins::set_impl);
+        builtin("update", 1, crate::query::builtins::update_impl);
 
         Self {
             arena,

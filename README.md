@@ -50,7 +50,7 @@ $$
 T(R(X)) \xrightarrow{\text{bind}} T(R(Y))
 $$
 
-This allows composition of queries without leaving the monadic context, preserving purity, composability, and deferred execution.
+This allows composition of queries without leaving the monadic context, which allows: purity, composability, and deferred execution.
 
 ---
 

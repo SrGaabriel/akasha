@@ -3,6 +3,7 @@ use crate::query::err::TransformError;
 use crate::query::transformer::AstToQueryTransformer;
 use crate::query::{QueryExpr, TransactionOp, TransactionType};
 use std::rc::Rc;
+use futures::SinkExt;
 
 pub struct BuiltInTransactionFunction {
     pub name: String,
@@ -59,7 +60,7 @@ pub fn filter_impl(
                         predicate: Rc::new(predicate),
                     });
                 }
-                _ => return Err(TransformError::InvalidArgument("filter".to_string())),
+                _ => return Err(TransformError::InvalidArgument(format!("filter: {:?}", input))),
             }
             Ok(input.clone())
         } else {
@@ -185,4 +186,60 @@ pub fn offset_impl(
     }
 
     Ok(input.clone())
+}
+
+pub fn update_impl(
+    _transformer: &mut AstToQueryTransformer,
+    args: Vec<QueryExpr>,
+) -> Result<QueryExpr, TransformError> {
+    if let QueryExpr::Literal(Value::Text(table_name)) = &args[0] {
+        Ok(QueryExpr::Transaction {
+            typ: TransactionType::IncompleteUpdate {
+                table_name: table_name.clone(),
+            },
+            operations: vec![],
+        })
+    } else if let QueryExpr::Reference(table_name) = &args[0] {
+        Ok(QueryExpr::Transaction {
+            typ: TransactionType::IncompleteUpdate {
+                table_name: table_name.clone(),
+            },
+            operations: vec![],
+        })
+    } else {
+        Err(TransformError::InvalidArgument("update".to_string()))
+    }
+}
+
+pub fn set_impl(
+    _transformer: &mut AstToQueryTransformer,
+    mut args: Vec<QueryExpr>,
+) -> Result<QueryExpr, TransformError> {
+    if let Some(QueryExpr::Instance(s)) = args.get(0) {
+        let value = args[0].clone();
+        let columns = match &args[1] {
+            QueryExpr::Tuple(cols) => cols.clone(),
+            QueryExpr::Reference(name) => vec![name.clone()],
+            _ => return Err(TransformError::InvalidArgument(format!("set {:?}", args[2]))),
+        };
+        let input = args
+            .get(2)
+            .ok_or_else(|| TransformError::InvalidArgument("set".to_string()))?;
+
+        if let QueryExpr::Transaction { typ, operations, .. } = &input {
+            let table_name = match typ {
+                TransactionType::IncompleteUpdate { table_name } => table_name.clone(),
+                _ => return Err(TransformError::InvalidTransactionTypeForSet)
+            };
+            return Ok(QueryExpr::Transaction {
+                typ: TransactionType::Update {
+                    table_name,
+                    value: Rc::new(value),
+                    returning: Some(columns)
+                },
+                operations: operations.clone()
+            })
+        }
+    }
+    Err(TransformError::InvalidArgument("set".to_string()))
 }

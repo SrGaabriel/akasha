@@ -8,6 +8,7 @@ use crate::table::TableCatalog;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use lazy_static::lazy_static;
 
 #[derive(Debug)]
 pub enum TransactionValue {
@@ -62,35 +63,30 @@ impl PlanCompiler {
                 } => {
                     let ops = self.build_ops(table_name, operations)?;
                     let value = self.compile_expr(value)?;
-                    let returning_indices = returning
-                        .as_ref()
-                        .map(|returning_columns| {
-                            returning_columns
-                                .iter()
-                                .map(|col| self.resolve_column_index(table_name, col))
-                                .collect::<QueryResult<Vec<usize>>>()
-                        })
-                        .transpose()?;
+                    let returning_indices = self.map_returning_indices(table_name, returning)?;
+                    let indexed_values = self.get_struct_value_indices(table_name, value)?;
 
-                    match value {
-                        TransactionValue::Row(mut values) => {
-                            let indexed_values = values
-                                .drain(..)
-                                .map(|(name, value)| {
-                                    self.resolve_column_index(table_name, &name)
-                                        .map(|index| (index as u32, value))
-                                })
-                                .collect::<QueryResult<Vec<_>>>()?;
+                    Ok(Transaction::Insert {
+                        table: table_name.clone(),
+                        values: indexed_values,
+                        returning: returning_indices,
+                        pos_ops: ops
+                    })
+                }
+                TransactionType::Update { table_name, value, returning } => {
+                    let ops = self.build_ops(table_name, operations)?;
+                    let value = self.compile_expr(value)?;
+                    // let returning_indices = self.map_returning_indices(table_name, returning)?;
+                    let indexed_values = self.get_struct_value_indices(table_name, value)?;
 
-                            Ok(Transaction::Insert {
-                                table: table_name.clone(),
-                                values: indexed_values,
-                                ops,
-                                returning: returning_indices,
-                            })
-                        }
-                        _ => Err(QueryError::ExpectedRow),
-                    }
+                    Ok(Transaction::Update {
+                        table: table_name.clone(),
+                        values: indexed_values,
+                        pre_ops: ops
+                    })
+                },
+                TransactionType::IncompleteUpdate { table_name: _ } => {
+                    Err(QueryError::UpdateWithoutChanges)
                 }
             },
             _ => Err(QueryError::NotATransaction),
@@ -214,4 +210,32 @@ impl PlanCompiler {
         }
         Ok(ops)
     }
+
+    fn get_struct_value_indices(&self, table_name: &str, value: TransactionValue) -> Result<Vec<(u32, Value)>, QueryError> {
+        match value {
+            TransactionValue::Row(mut values) => {
+                values
+                    .drain(..)
+                    .map(|(name, value)| {
+                        self.resolve_column_index(table_name, &name)
+                            .map(|index| (index as u32, value))
+                    })
+                    .collect::<QueryResult<Vec<_>>>()
+            }
+            _ => Err(QueryError::ExpectedRow)
+        }
+    }
+
+    fn map_returning_indices(&self, table_name: &str, returning: &Option<Vec<String>>) -> Result<Vec<usize>, QueryError> {
+        returning
+            .as_ref()
+            .unwrap_or_else(|| &EMPTY_VEC)
+            .iter()
+            .map(|col| self.resolve_column_index(table_name, col))
+            .collect::<QueryResult<Vec<usize>>>()
+    }
+}
+
+lazy_static! {
+    static ref EMPTY_VEC: Vec<String> = Vec::with_capacity(0);
 }

@@ -146,7 +146,7 @@ impl Shard {
         for slot in self.slots.iter() {
             if slot.key.load(Acquire) == key {
                 if slot.dirty.swap(false, AcqRel) {
-                    let bytes = unsafe { (*slot.buf.get())[..].to_vec() };
+                    let bytes = unsafe { (&(*slot.buf.get()))[..].to_vec() };
                     self.io.schedule_write(file_id, page_id, bytes);
                 }
                 return;
@@ -165,7 +165,7 @@ impl Shard {
                 if s.dirty.swap(false, AcqRel) {
                     let fid = (key >> 32) as u32;
                     let pid = key as u32;
-                    let bytes = unsafe { (*s.buf.get())[..].to_vec() };
+                    let bytes = unsafe { (&(*s.buf.get()))[..].to_vec() };
                     self.io.schedule_write(fid, pid, bytes);
                 }
             }
@@ -195,7 +195,7 @@ impl BufferPool {
         self.shards[s].get_page(file_id, page_id).await
     }
 
-    pub async fn get_page_raw(&self, file_id: u32, page_id: u32) -> Page {
+    pub async fn get_page_raw(&self, file_id: u32, page_id: u32) -> Page<'_> {
         let ptr = self.get_page_ptr(file_id, page_id).await;
         unsafe { Page::from_raw(page_id, ptr) }
     }

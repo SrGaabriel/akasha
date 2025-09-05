@@ -2,7 +2,7 @@ use crate::page::Page;
 use crate::page::err::DbResult;
 use crate::page::io::IoManager;
 use crate::page::pool::BufferPool;
-use crate::page::tuple::Tuple;
+use crate::page::tuple::{Tuple, Value};
 use futures::{
     Future, Stream,
     task::{Context, Poll},
@@ -11,6 +11,7 @@ use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::util::trees::IndexedList;
 
 pub struct TableHeap {
     pub file_id: u32,
@@ -85,6 +86,17 @@ impl TableHeap {
             .await;
         Ok(())
     }
+
+    pub async fn update_tuple(&self, page_id: u32, slot_id: usize, new_values: IndexedList<Value>) -> Result<(), String> {
+        let ptr = self.buffer_pool.get_page_ptr(self.file_id, page_id).await;
+        let mut page = unsafe { Page::from_raw(page_id, ptr) };
+
+        page.update_tuple(slot_id, new_values);
+        self.buffer_pool
+            .unpin_and_flush(self.file_id, page_id, true)
+            .await;
+        Ok(())
+    }
 }
 
 enum OptimizedTableIteratorState {
@@ -98,6 +110,22 @@ enum OptimizedTableIteratorState {
         current_slot_idx: usize,
     },
     Finished,
+}
+
+pub struct IndexedTuple {
+    pub page_id: u32,
+    pub slot_id: usize,
+    pub inner: Tuple
+}
+
+impl IndexedTuple {
+    pub fn swap(self, new_inner: Tuple) -> IndexedTuple {
+        Self {
+            page_id: self.page_id,
+            slot_id: self.slot_id,
+            inner: new_inner
+        }
+    }
 }
 
 pub struct OptimizedTableIterator {
@@ -119,7 +147,7 @@ impl OptimizedTableIterator {
 }
 
 impl Stream for OptimizedTableIterator {
-    type Item = Tuple;
+    type Item = IndexedTuple;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -134,8 +162,13 @@ impl Stream for OptimizedTableIterator {
                     let page = unsafe { Page::from_raw(*page_id, *page_ptr) };
 
                     if let Some(tuple) = page.get_tuple(*current_slot_idx) {
+                        let indexed_tuple = IndexedTuple {
+                            page_id: *page_id,
+                            slot_id: *current_slot_idx,
+                            inner: tuple
+                        };
                         *current_slot_idx += 1;
-                        return Poll::Ready(Some(tuple));
+                        return Poll::Ready(Some(indexed_tuple));
                     } else {
                         this.heap
                             .buffer_pool

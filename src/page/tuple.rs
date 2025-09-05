@@ -1,4 +1,5 @@
 use chrono::Datelike;
+use crate::util::trees::IndexedList;
 
 #[derive(Debug)]
 pub struct Tuple(pub Vec<Value>);
@@ -22,6 +23,25 @@ impl Tuple {
             offset += size;
         }
         Self(values)
+    }
+
+    pub fn update_bytes(data: &mut [u8], mut values: IndexedList<Value>) {
+        let mut offset = 0;
+        let mut idx = 0;
+        while offset < data.len() {
+            let current_data = &mut data[offset..];
+            if let Some(value) = values.get(idx) {
+                let mut buf = Vec::with_capacity(value.get_size());
+                value.to_bytes_into(&mut buf);
+                current_data[..buf.len()].copy_from_slice(&buf);
+                offset += buf.len();
+                idx += 1;
+                continue;
+            }
+            let size = Value::read_size(current_data);
+            offset += size;
+            idx += 1;
+        }
     }
 }
 
@@ -203,6 +223,29 @@ impl Value {
             Some(*b)
         } else {
             None
+        }
+    }
+
+    pub fn read_size(data: &[u8]) -> usize {
+        match data[0] {
+            0x00 => 1,
+            0x01 => 5,
+            0x02 => 9,
+            0x03 => 5,
+            0x04 => 9,
+            0x05 => {
+                let len = u16::from_le_bytes(data[1..3].try_into().unwrap()) as usize;
+                3 + len
+            }
+            0x06 => 2,
+            0x07 => 9,
+            0x08 => 13,
+            0x09 => {
+                let len = u16::from_le_bytes(data[1..3].try_into().unwrap()) as usize;
+                3 + len
+            }
+            0x0A => 2,
+            _ => panic!("Unknown value type: {}", data[0]),
         }
     }
 }

@@ -1,4 +1,3 @@
-#![feature(let_chains)]
 
 use crate::frontend::ast::{Arena, Visitor};
 use crate::frontend::lexer::Lexer;
@@ -25,6 +24,7 @@ pub mod frontend;
 pub mod page;
 pub mod query;
 pub mod table;
+mod util;
 
 struct DebugTimer {
     name: String,

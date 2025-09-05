@@ -17,13 +17,18 @@ pub enum Transaction {
     Insert {
         table: String,
         values: Vec<(u32, Value)>,
-        ops: Vec<TableOp>,
-        returning: Option<Vec<usize>>,
+        returning: Vec<usize>,
+        pos_ops: Vec<TableOp>
     },
     Select {
         table: String,
         ops: Vec<TableOp>,
     },
+    Update {
+        table: String,
+        pre_ops: Vec<TableOp>,
+        values: Vec<(u32, Value)>,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +88,14 @@ pub enum TransactionType {
         value: Rc<QueryExpr>,
         returning: Option<Vec<String>>,
     },
+    IncompleteUpdate {
+        table_name: String
+    },
+    Update {
+        table_name: String,
+        value: Rc<QueryExpr>,
+        returning: Option<Vec<String>>,
+    }
 }
 
 #[derive(Debug, Clone)]
