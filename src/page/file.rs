@@ -34,6 +34,10 @@ impl RelationFile {
         buffer: &'a mut [u8; PAGE_SIZE],
     ) -> DbResult<Page<'a>> {
         let offset = (page_index as u64) * (PAGE_SIZE as u64);
+        if offset + PAGE_SIZE as u64 > self.file.metadata().await?.len() {
+            buffer.fill(0);
+            return Ok(Page::from_bytes(page_index, buffer));
+        }
         self.file.seek(SeekFrom::Start(offset)).await?;
         self.file.read_exact(buffer).await?;
         Ok(Page::from_bytes(page_index, buffer))

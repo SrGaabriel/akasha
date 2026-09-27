@@ -132,10 +132,10 @@ impl Shard {
         let key = make_key(file_id, page_id);
         for slot in self.slots.iter() {
             if slot.key.load(Acquire) == key {
-                let prev = slot.pin.fetch_sub(1, Release);
-                if prev == 1 && is_dirty {
+                if is_dirty {
                     slot.dirty.store(true, Release);
                 }
+                slot.pin.fetch_sub(1, Release);
                 return;
             }
         }
@@ -218,6 +218,14 @@ impl BufferPool {
             futures.push(shard_arc.flush_all_dirty_pages_in_shard());
         }
         futures::future::join_all(futures).await;
+    }
+
+    /// Flushes every dirty page and waits until the writes reach disk.
+    pub async fn sync(&self) {
+        self.flush().await;
+        if let Some(shard) = self.shards.first() {
+            shard.io.sync().await;
+        }
     }
 }
 

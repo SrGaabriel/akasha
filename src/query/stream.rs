@@ -1,6 +1,5 @@
 use crate::page::tuple::{Tuple, Value};
-use crate::query::ComparisonOperator;
-use crate::query::op::TableOp;
+use crate::query::op::{compare_values, TableOp};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use futures::StreamExt;
@@ -50,28 +49,7 @@ where
                 } => {
                     let Tuple(ref tuple_values) = tuple.inner;
                     let column_value = &tuple_values[*column_index];
-                    let matches = match (column_value, operator, value) {
-                        (a, ComparisonOperator::Eq, b) => a == b,
-                        (a, ComparisonOperator::Neq, b) => a != b,
-                        (a, ComparisonOperator::Gt, b) => a > b,
-                        (a, ComparisonOperator::GtEq, b) => a >= b,
-                        (a, ComparisonOperator::Lt, b) => a < b,
-                        (a, ComparisonOperator::LtEq, b) => a <= b,
-                        (a, ComparisonOperator::Like, b) => {
-                            if let (Value::Text(a), Value::Text(b)) = (a, b) {
-                                a.contains(b)
-                            } else {
-                                false
-                            }
-                        }
-                        (a, ComparisonOperator::NotLike, b) => {
-                            if let (Value::Text(a), Value::Text(b)) = (a, b) {
-                                !a.contains(b)
-                            } else {
-                                false
-                            }
-                        }
-                    };
+                    let matches = compare_values(column_value, operator, value);
                     if !matches {
                         return None;
                     }

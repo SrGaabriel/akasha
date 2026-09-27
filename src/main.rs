@@ -63,6 +63,7 @@ impl Drop for DebugTimer {
 }
 
 struct QueryEngine {
+    buffer_pool: Arc<BufferPool>,
     compiler: PlanCompiler,
     arena: Arena,
     executor: QueryExecutor,
@@ -79,6 +80,7 @@ impl QueryEngine {
         let io = Arc::new(IoManager::new(Arc::clone(&file_io)));
         let buffer_pool = BufferPool::new(Arc::clone(&io));
 
+        let pool = Arc::clone(&buffer_pool);
         let catalog = match TableCatalog::load(Arc::clone(&io), Arc::clone(&buffer_pool)).await {
             Ok(cat) => {
                 println!("Loaded catalog with {} tables", cat.tables.len());
@@ -111,6 +113,7 @@ impl QueryEngine {
         let catalog = Arc::new(catalog);
 
         Ok(Self {
+            buffer_pool: pool,
             compiler: PlanCompiler::new(Arc::clone(&catalog)),
             arena: Arena::with_capacity(10000, 1000),
             executor: QueryExecutor::new(catalog),
@@ -223,7 +226,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         print!("> ");
         io::stdout().flush()?;
 
-        io::stdin().read_line(&mut input)?;
+        if io::stdin().read_line(&mut input)? == 0 {
+            break;
+        }
         let input_str = input.trim();
 
         match input_str {
@@ -265,8 +270,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Err(e) = engine.execute_query_file(&file_path).await {
                     println!("Error: {}", e);
                 }
+                engine.buffer_pool.sync().await;
             }
         }
     }
+    engine.buffer_pool.sync().await;
     Ok(())
 }

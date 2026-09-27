@@ -102,22 +102,11 @@ impl QueryExecutor {
                     })
                     .collect()); // todo: optimize
 
-                let mut update_futures = Vec::new();
-                let mut idx = 0;
-                let mut stream = filtered_stream;
-                while let Some(tuple) = stream.next().await {
-                    let heap_clone = heap.clone();
-                    let values = indexed_values.clone();
-                    update_futures.push(tokio::spawn(async move {
-                        heap_clone
-                            .update_tuple(tuple.page_id, tuple.slot_id, values)
-                            .await
-                    }));
-                    idx += 1;
-                }
-
-                for fut in update_futures {
-                    fut.await.map_err(|e| format!("Update task failed: {}", e))??;
+                let targets: Vec<IndexedTuple> = filtered_stream.collect().await;
+                for tuple in targets {
+                    heap.update_tuple(tuple.page_id, tuple.slot_id, indexed_values.clone())
+                        .await
+                        .map_err(|e| format!("Update failed: {}", e))?;
                 }
 
                 Ok(Box::pin(futures::stream::iter(vec![])))

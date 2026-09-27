@@ -3,7 +3,7 @@ use crate::page::err::DbResult;
 use crate::page::file::{EXTENSION, RelationFile};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 pub struct FileSystemManager {
     home_dir: String,
@@ -29,27 +29,38 @@ impl FileSystemManager {
     }
 }
 
-struct WriteJob {
-    file_id: u32,
-    page_id: u32,
-    data: Vec<u8>,
+enum IoJob {
+    Write {
+        file_id: u32,
+        page_id: u32,
+        data: Vec<u8>,
+    },
+    // Resolves once every write queued before it has reached disk.
+    Barrier(oneshot::Sender<()>),
 }
 
 pub struct IoManager {
     inner: Arc<FileSystemManager>,
     open_files: Mutex<HashMap<u32, RelationFile>>,
-    tx: mpsc::UnboundedSender<WriteJob>,
+    tx: mpsc::UnboundedSender<IoJob>,
 }
 
 impl IoManager {
     pub fn new(inner: Arc<FileSystemManager>) -> Self {
-        let (tx, mut rx) = mpsc::unbounded_channel::<WriteJob>();
+        let (tx, mut rx) = mpsc::unbounded_channel::<IoJob>();
         let inner_clone = Arc::clone(&inner);
 
         tokio::spawn(async move {
             while let Some(job) = rx.recv().await {
-                if let Ok(mut pf) = inner_clone.open_page_file(job.file_id).await {
-                    let _ = pf.write_page_data(job.page_id, job.data).await;
+                match job {
+                    IoJob::Write { file_id, page_id, data } => {
+                        if let Ok(mut pf) = inner_clone.open_page_file(file_id).await {
+                            let _ = pf.write_page_data(page_id, data).await;
+                        }
+                    }
+                    IoJob::Barrier(done) => {
+                        let _ = done.send(());
+                    }
                 }
             }
         });
@@ -97,10 +108,18 @@ impl IoManager {
     }
 
     pub fn schedule_write(&self, file_id: u32, page_id: u32, data: Vec<u8>) {
-        let _ = self.tx.send(WriteJob {
+        let _ = self.tx.send(IoJob::Write {
             file_id,
             page_id,
             data,
         });
+    }
+
+    /// Waits until every write scheduled so far has been written to disk.
+    pub async fn sync(&self) {
+        let (done, wait) = oneshot::channel();
+        if self.tx.send(IoJob::Barrier(done)).is_ok() {
+            let _ = wait.await;
+        }
     }
 }

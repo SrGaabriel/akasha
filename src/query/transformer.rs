@@ -248,27 +248,28 @@ impl<'a> AstToQueryTransformer<'a> {
         node_id: NodeId,
     ) -> Result<PredicateExpr, TransformError> {
         match self.arena.get(node_id) {
+            // Logical operators combine predicates, so their operands must stay predicates.
+            Expr::BinaryOp { op, left, right } if matches!(op, TokenKind::And | TokenKind::Or) => {
+                let (op, left, right) = (op.clone(), *left, *right);
+                let left_pred = Rc::new(self.transform_to_predicate(left)?);
+                let right_pred = Rc::new(self.transform_to_predicate(right)?);
+                Ok(if op == TokenKind::And {
+                    PredicateExpr::And(left_pred, right_pred)
+                } else {
+                    PredicateExpr::Or(left_pred, right_pred)
+                })
+            }
             Expr::BinaryOp { op, left, right } => {
                 let left_expr = self.transform_node(*left)?;
                 let right_expr = self.transform_node(*right)?;
 
                 let operator = match op {
-                    TokenKind::Equals => ComparisonOperator::Eq,
+                    TokenKind::Equals | TokenKind::EqualsEquals => ComparisonOperator::Eq,
                     TokenKind::NotEquals => ComparisonOperator::Neq,
                     TokenKind::GreaterThan => ComparisonOperator::Gt,
                     TokenKind::GreaterThanEquals => ComparisonOperator::GtEq,
                     TokenKind::LessThan => ComparisonOperator::Lt,
                     TokenKind::LessThanEquals => ComparisonOperator::LtEq,
-                    TokenKind::And => {
-                        let left_pred = self.transform_to_predicate(*left)?;
-                        let right_pred = self.transform_to_predicate(*right)?;
-                        return Ok(PredicateExpr::And(Rc::new(left_pred), Rc::new(right_pred)));
-                    }
-                    TokenKind::Or => {
-                        let left_pred = self.transform_to_predicate(*left)?;
-                        let right_pred = self.transform_to_predicate(*right)?;
-                        return Ok(PredicateExpr::Or(Rc::new(left_pred), Rc::new(right_pred)));
-                    }
                     _ => return Err(TransformError::UnsupportedOperator(op.clone())),
                 };
 

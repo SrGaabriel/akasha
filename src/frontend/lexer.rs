@@ -258,6 +258,34 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    fn read_two_char_token(&mut self, kind: TokenKind) -> Token<'src> {
+        let start_pos = self.peek_pos();
+        self.advance();
+        self.advance();
+        let end_pos = self.peek_pos();
+        Token {
+            kind,
+            value: &self.source[start_pos..end_pos],
+            indent: self.current_indent,
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+            },
+        }
+    }
+
+    fn two_char_operator(first: char, second: Option<char>) -> Option<TokenKind> {
+        match (first, second?) {
+            ('&', '&') => Some(TokenKind::And),
+            ('|', '|') => Some(TokenKind::Or),
+            ('=', '=') => Some(TokenKind::EqualsEquals),
+            ('!', '=') => Some(TokenKind::NotEquals),
+            ('>', '=') => Some(TokenKind::GreaterThanEquals),
+            ('<', '=') => Some(TokenKind::LessThanEquals),
+            _ => None,
+        }
+    }
+
     fn read_single_char_token(&mut self, c: char) -> Result<Token<'src>, QueryParsingError> {
         let start_pos = self.peek_pos();
         self.advance();
@@ -356,6 +384,10 @@ impl<'src> Lexer<'src> {
                         tokens.push(self.read_single_char_token(c)?);
                     }
                 }
+                c if Self::two_char_operator(c, self.peek_next()).is_some() => {
+                    let kind = Self::two_char_operator(c, self.peek_next()).unwrap();
+                    tokens.push(self.read_two_char_token(kind));
+                }
                 '|' => {
                     if let Some(next_c) = self.peek_next() {
                         if next_c == '>' {
@@ -420,5 +452,33 @@ impl Display for TokenKind {
             TokenKind::Percent => "Percent",
         };
         write!(f, "{}", ref_name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kinds(source: &str) -> Vec<TokenKind> {
+        Lexer::new(source).tokenize().unwrap().into_iter().map(|t| t.kind).collect()
+    }
+
+    #[test]
+    fn lexes_two_character_operators() {
+        assert_eq!(
+            kinds("a && b || c == d != e >= f <= g"),
+            vec![
+                TokenKind::Identifier, TokenKind::And, TokenKind::Identifier, TokenKind::Or,
+                TokenKind::Identifier, TokenKind::EqualsEquals, TokenKind::Identifier,
+                TokenKind::NotEquals, TokenKind::Identifier, TokenKind::GreaterThanEquals,
+                TokenKind::Identifier, TokenKind::LessThanEquals, TokenKind::Identifier,
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_pipes_and_single_equals() {
+        assert_eq!(kinds("x |> y"), vec![TokenKind::Identifier, TokenKind::Application, TokenKind::Identifier]);
+        assert_eq!(kinds("age = 1"), vec![TokenKind::Identifier, TokenKind::Equals, TokenKind::Number]);
     }
 }

@@ -91,11 +91,11 @@ impl TableHeap {
         let ptr = self.buffer_pool.get_page_ptr(self.file_id, page_id).await;
         let mut page = unsafe { Page::from_raw(page_id, ptr) };
 
-        page.update_tuple(slot_id, new_values);
+        let result = page.update_tuple(slot_id, new_values);
         self.buffer_pool
-            .unpin_and_flush(self.file_id, page_id, true)
+            .unpin_and_flush(self.file_id, page_id, result.is_ok())
             .await;
-        Ok(())
+        result
     }
 }
 

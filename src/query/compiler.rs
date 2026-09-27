@@ -1,6 +1,6 @@
 use crate::page::tuple::{Tuple, Value};
 use crate::query::err::{QueryError, QueryResult};
-use crate::query::op::TableOp;
+use crate::query::op::{compare_values, TableOp};
 use crate::query::{
     PredicateExpr, QueryExpr, SymbolInfo, Transaction, TransactionOp, TransactionType,
 };
@@ -133,11 +133,11 @@ impl PlanCompiler {
                         }]);
                     }
 
-                    let filter_fn = self.create_predicate_function(&*predicate)?;
+                    let filter_fn = self.create_predicate_function(table, &*predicate)?;
                     Ok(vec![TableOp::PredicativeFilter(filter_fn)])
                 }
                 _ => {
-                    let filter_fn = self.create_predicate_function(&*predicate)?;
+                    let filter_fn = self.create_predicate_function(table, &*predicate)?;
                     Ok(vec![TableOp::PredicativeFilter(filter_fn)])
                 }
             },
@@ -163,14 +163,54 @@ impl PlanCompiler {
             .ok_or_else(|| QueryError::ColumnNotFound(column.to_string(), table.to_string()))
     }
 
-    // TODO: implement
     fn create_predicate_function(
         &self,
-        _predicate: &PredicateExpr,
-    ) -> QueryResult<Arc<dyn Fn(&Tuple) -> bool + Send + Sync>> {
-        let filter_fn = Arc::new(move |_tuple: &Tuple| -> bool { true });
+        table: &str,
+        predicate: &PredicateExpr,
+    ) -> QueryResult<Predicate> {
+        match predicate {
+            PredicateExpr::Comparison { left, op, right } => {
+                let left = self.resolve_operand(table, left)?;
+                let right = self.resolve_operand(table, right)?;
+                let op = op.clone();
+                Ok(Arc::new(move |tuple: &Tuple| {
+                    match (left.value(tuple), right.value(tuple)) {
+                        (Some(l), Some(r)) => compare_values(l, &op, r),
+                        _ => false,
+                    }
+                }))
+            }
+            PredicateExpr::And(left, right) => {
+                let left = self.create_predicate_function(table, left)?;
+                let right = self.create_predicate_function(table, right)?;
+                Ok(Arc::new(move |tuple: &Tuple| left(tuple) && right(tuple)))
+            }
+            PredicateExpr::Or(left, right) => {
+                let left = self.create_predicate_function(table, left)?;
+                let right = self.create_predicate_function(table, right)?;
+                Ok(Arc::new(move |tuple: &Tuple| left(tuple) || right(tuple)))
+            }
+            PredicateExpr::Not(inner) => {
+                let inner = self.create_predicate_function(table, inner)?;
+                Ok(Arc::new(move |tuple: &Tuple| !inner(tuple)))
+            }
+            PredicateExpr::IsNull(expr) | PredicateExpr::IsNotNull(expr) => {
+                let operand = self.resolve_operand(table, expr)?;
+                let want_null = matches!(predicate, PredicateExpr::IsNull(_));
+                Ok(Arc::new(move |tuple: &Tuple| {
+                    matches!(operand.value(tuple), Some(Value::Null)) == want_null
+                }))
+            }
+            other => Err(QueryError::UnsupportedPredicate(format!("{:?}", other))),
+        }
+    }
 
-        Ok(filter_fn)
+    fn resolve_operand(&self, table: &str, expr: &QueryExpr) -> QueryResult<Operand> {
+        match expr {
+            QueryExpr::Column(name) => Ok(Operand::Column(self.resolve_column_index(table, name)?)),
+            QueryExpr::Literal(value) => Ok(Operand::Literal(value.clone())),
+            other => Err(QueryError::UnsupportedPredicate(format!("{:?}", other))),
+        }
     }
 
     fn push_scope(&mut self) {
@@ -238,4 +278,19 @@ impl PlanCompiler {
 
 lazy_static! {
     static ref EMPTY_VEC: Vec<String> = Vec::with_capacity(0);
+}
+type Predicate = Arc<dyn Fn(&Tuple) -> bool + Send + Sync>;
+
+enum Operand {
+    Column(usize),
+    Literal(Value),
+}
+
+impl Operand {
+    fn value<'t>(&'t self, tuple: &'t Tuple) -> Option<&'t Value> {
+        match self {
+            Operand::Column(index) => tuple.0.get(*index),
+            Operand::Literal(value) => Some(value),
+        }
+    }
 }

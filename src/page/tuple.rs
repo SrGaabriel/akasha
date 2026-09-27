@@ -1,5 +1,4 @@
 use chrono::Datelike;
-use crate::util::trees::IndexedList;
 
 #[derive(Debug)]
 pub struct Tuple(pub Vec<Value>);
@@ -23,25 +22,6 @@ impl Tuple {
             offset += size;
         }
         Self(values)
-    }
-
-    pub fn update_bytes(data: &mut [u8], mut values: IndexedList<Value>) {
-        let mut offset = 0;
-        let mut idx = 0;
-        while offset < data.len() {
-            let current_data = &mut data[offset..];
-            if let Some(value) = values.get(idx) {
-                let mut buf = Vec::with_capacity(value.get_size());
-                value.to_bytes_into(&mut buf);
-                current_data[..buf.len()].copy_from_slice(&buf);
-                offset += buf.len();
-                idx += 1;
-                continue;
-            }
-            let size = Value::read_size(current_data);
-            offset += size;
-            idx += 1;
-        }
     }
 }
 

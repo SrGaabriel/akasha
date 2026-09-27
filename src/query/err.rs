@@ -57,5 +57,7 @@ pub enum QueryError {
     #[error("Expected a value, but found a row")]
     RowCannotBeEmbeddedIntoAnotherRow,
     #[error("Update without changes")]
-    UpdateWithoutChanges
+    UpdateWithoutChanges,
+    #[error("Unsupported predicate: {0}")]
+    UnsupportedPredicate(String),
 }

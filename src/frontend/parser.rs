@@ -119,14 +119,14 @@ impl<'src> Parser<'src> {
     }
 
     fn pipe_expression(&mut self) -> Result<NodeId, ParseError<'src>> {
-        let mut left = self.comparison_expression()?;
+        let mut left = self.or_expression()?;
 
         // Use peek_is_any_relevant to look past newlines for pipe operators
         while self.peek_is_any_relevant(&[TokenKind::Application]) {
             // Skip newlines before consuming the pipe operator
             self.skip_newlines();
             self.consume()?; // consume the pipe operator
-            let right = self.comparison_expression()?;
+            let right = self.or_expression()?;
 
             if let Some((func, mut args)) = self.arena.extract_function_call(right) {
                 args.push(left);
@@ -213,7 +213,8 @@ impl<'src> Parser<'src> {
             }
             TokenKind::String => {
                 self.consume()?;
-                Ok(self.arena.create_string_lit(token.value))
+                let unquoted = &token.value[1..token.value.len() - 1];
+                Ok(self.arena.create_string_lit(unquoted))
             }
             TokenKind::True => {
                 self.consume()?;
@@ -410,12 +411,34 @@ impl<'src> Parser<'src> {
         Ok(bindings)
     }
 
+    fn or_expression(&mut self) -> Result<NodeId, ParseError<'src>> {
+        let mut left = self.and_expression()?;
+        while self.peek_is_any(&[TokenKind::Or]) {
+            let op_token = self.consume()?;
+            let right = self.and_expression()?;
+            left = self.arena.create_binary_op(op_token.kind, left, right);
+        }
+        Ok(left)
+    }
+
+    fn and_expression(&mut self) -> Result<NodeId, ParseError<'src>> {
+        let mut left = self.comparison_expression()?;
+        while self.peek_is_any(&[TokenKind::And]) {
+            let op_token = self.consume()?;
+            let right = self.comparison_expression()?;
+            left = self.arena.create_binary_op(op_token.kind, left, right);
+        }
+        Ok(left)
+    }
+
     fn comparison_expression(&mut self) -> Result<NodeId, ParseError<'src>> {
         let mut left = self.numeric_expression()?;
 
         while self.peek_is_any(&[
             TokenKind::GreaterThan,
             TokenKind::LessThan,
+            TokenKind::GreaterThanEquals,
+            TokenKind::LessThanEquals,
             TokenKind::EqualsEquals,
             TokenKind::NotEquals,
         ]) {
